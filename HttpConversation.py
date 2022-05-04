@@ -1,12 +1,13 @@
+from re import sub
 import httpUtil
 from Cookie import Cookie
 import socket
 import ssl
-import generalUtils
 from os import mkdir
-from webbrowser import open_new_tab
+import webbrowser
 from os import getcwd
-from time import sleep
+from timeit import default_timer as timer
+from os import path
 
 
 class bcolors:
@@ -23,8 +24,8 @@ class bcolors:
 
 class HttpConversation:
     # Also creates the folder if the path doesn't exist.
-    def __init__(self, logsFolderPath: str = "HTTP-Logs", maxReferrals: int = 5, recvTimeOut: int = 1,
-                 port: int = 443) -> None:
+    def __init__(self, logsFolderPath: str = "HTTP-Logs", maxReferrals: int = 5, recvTimeOut: int = 3,
+                 port: int = 443, listenSize: int = 4096) -> None:
         if logsFolderPath == '':
             logsFolderPath = "HTTP-Logs/"
         try:
@@ -38,27 +39,31 @@ class HttpConversation:
         self.logsFolderPath: str = logsFolderPath
         self.currentRequestIndex: int = 0
         self.lastReferredURL: str = ''
-        self.domainCookiesDict: dict = dict()
+        self.domainCookiesDict: dict = dict()  # {domain: {cookieName: Cookie}}
         self.__securedSocket: socket = socket.socket()
         self.maxReferrals: int = maxReferrals
-        self.recvTimeOut: int = recvTimeOut
-        self.port: int = port
+        self.recvTimeOut: int = recvTimeOut  # in seconds
+        self.port: int = port  # Should be 443 always, but added for flexibility.
         self.requestsSent: list = []
+        self.listenSize: int = listenSize
 
     # Initiates the connection while following the given connection list.
     # If the server redirects, it will follow the redirect up to a limit, which by default is 5.
     # If the max referrals is exceeded a value error will be raised.
-    def startConversation(self, connectList: list, acceptedEnc: str = "utf-8") -> None:
+    def startConversation(self, connectList: list, acceptedEnc: str = "utf-8", ignoreExceptions: bool = True) -> None:
         for i in range(len(connectList)):
             requestName: str = connectList[i][0]
             requestType: str = connectList[i][1]
             url: str = connectList[i][2]
             content: str = connectList[i][3]
             headersDict: dict = connectList[i][4]
+
             totalRequestName: str = f"{str(self.currentRequestIndex)}{requestName}{requestType}"
-            (responseHeaders, responseContent) = self.__converse(totalRequestName, requestType, url, content,
-                                                                 headersDict,
-                                                                 acceptedEnc)
+            response: tuple[str, str] = self.__converse(totalRequestName, requestType, url, content, headersDict,
+                                                        acceptedEnc,
+                                                        ignoreExceptions)
+            responseHeaders: str = response[0]
+            responseContent: str = response[1]
             self.requestsSent.append(f"{totalRequestName} {url}")
             referredCount: int = 0
             while "Location:" in responseHeaders and referredCount < self.maxReferrals:
@@ -66,8 +71,10 @@ class HttpConversation:
                 referredRequestName: str = f"{self.currentRequestIndex}{requestName}{referredCount}{requestType}"
                 url: str = getReferralLink(responseHeaders)
                 print(f"Referring to {url}")
-                (responseHeaders, responseContent) = self.__converse(referredRequestName, requestType, url, content,
-                                                                     headersDict, acceptedEnc)
+                response: tuple[str, str] = self.__converse(referredRequestName, requestType, url, content, headersDict,
+                                                            acceptedEnc, ignoreExceptions)
+                responseHeaders: str = response[0]
+                responseContent: str = response[1]
                 self.requestsSent.append(f"{referredRequestName} {url} (Referred)")
                 referredCount += 1
                 if not referredCount < self.maxReferrals:
@@ -75,13 +82,13 @@ class HttpConversation:
 
     #
     def __converse(self, requestName: str, requestType: str, url: str, content: str, headersDict: dict,
-                   acceptedEnc: str):
+                   acceptedEnc: str, ignoreExceptions: bool) -> tuple:
         self.changeHostIfNeeded(url)
         if self.domainCookiesDict is not None and url in self.domainCookiesDict:
             checkCookies(self.domainCookiesDict[url])
         request: str = httpUtil.buildRequest(requestType, url, content=content, urlCookiesDict=self.domainCookiesDict,
                                              moreHeaders=headersDict, acceptEnc=acceptedEnc)
-        (responseHeaders, responseContent) = self.sendRecvLogData(request, requestName)
+        (responseHeaders, responseContent) = self.sendRecvLog(request, requestName, ignoreExceptions=ignoreExceptions)
         self.getSetCookiesDomain(requestName, url)
         self.lastReferredURL: str = url
         self.currentRequestIndex += 1
@@ -95,7 +102,7 @@ class HttpConversation:
     def getSetCookiesDomain(self, requestName: str, URL: str) -> None:
         if httpUtil.getDomainFromUrl(URL) not in self.domainCookiesDict:
             self.domainCookiesDict[httpUtil.getDomainFromUrl(URL)] = dict()
-        with open(f"{self.logsFolderPath}{requestName}_response.txt", "rb") as responseFile:
+        with open(f"{self.logsFolderPath}{requestName}_headers.txt", "rb") as responseFile:
             cookiesList: list = []
             for line in responseFile:
                 if "Set-Cookie:" in line.decode(encoding="ISO-8859-1"):
@@ -105,141 +112,85 @@ class HttpConversation:
                 if currentCookie.getValue() != "deleted" and not currentCookie.isExpired():
                     self.domainCookiesDict[httpUtil.getDomainFromUrl(URL)][currentCookie.getName()] = currentCookie
 
-    # Send the request and receive the response or the beginning of it.
-    # If an error occurs, the client will try and resend the request.
-    # Returns the data received to be used by sendRecv.
-    def initialSendRecv(self, request: str, requestName: str, listenSize: int = 32768, maxRecv: int = 10,
-                        retries: int = 5) -> bytes:
-        recvCount: int = 0
-        self.__securedSocket.send(request.encode())
-        data: bytes = bytes()
-        try:
-            data = self.__securedSocket.recv(listenSize)
-            a = 1
-        except ssl.SSLWantReadError:
-            print(
-                f"{bcolors.WARNING}Unknown failure to receive packet on request {requestName}. Retrying.{bcolors.ENDC}")
-            return self.initialSendRecv(request, requestName, retries=retries - 1)
-        except TimeoutError:
-            print(f"{bcolors.WARNING}Timeout on request {requestName}. Retrying.{bcolors.ENDC}")
-            return self.initialSendRecv(request, requestName, retries=retries - 1)
-        # The server might send empty or otherwise failed packets for unknown reasons.
-        # If so, the client will try and receive packets for maxRecv times.
-        # If exceeded, the client will try and send the request again.
-        while not httpUtil.isValidResponse(data) and retries != 0:
-            generalUtils.clearFileAndWrite(
-                f"{self.logsFolderPath}invalid_packets/{requestName}{recvCount}_packetLog.txt", 'wb', data)
-            if recvCount > maxRecv:
-                print(
-                    f"{bcolors.WARNING}Number of invalid packets exceeds maximum ({str(maxRecv)}). Retrying to send.{bcolors.ENDC}")
-                return self.initialSendRecv(request, requestName, retries=retries - 1)
-            try:
-                data = self.__securedSocket.recv(listenSize)
-            except TimeoutError:
-                pass
-            recvCount += 1
-        else:
-            if retries == 0 and not httpUtil.isValidResponse(data):
-                raise Exception(f"Unable to receive response ")
-            if not data.endswith(b'\r\n\r\n'):
-                return self.initialSendRecv(request, requestName, retries=retries - 1)
-        return data
-
-    def initialSendRecv2(self, request: str, requestName: str, listenSize: int = 4096, maxRecv: int = 100000) -> bytes:
-        self.__securedSocket.send(request.encode())
-        data = self.__securedSocket.recv(listenSize)
-        logData = data
-        while not data.endswith(b'\r\n\r\n') and maxRecv != 0:
-            try:
-                currData = self.__securedSocket.recv(listenSize)
-            except TimeoutError:
-                return data
-            data += currData
-            logData += b"|" + currData
-            maxRecv -= 1
-        if maxRecv == 0:
-            print(f"{bcolors.WARNING}Unable to receive full response {requestName}. Limit exceeded.{maxRecv}{bcolors.ENDC}")
-        while not data.endswith(b'\r\n\r\n') and maxRecv != 0:
-            try:
-                currData = self.__securedSocket.recv(listenSize)
-                data += currData
-                logData += b"|" + currData
-
-        return data
-
     # Sends the data to the given socket, receives the reply and logs the messages.
     # Does minimal parsing to the data, which separates the HTTP response from the HTTP content.
     # Logs the request sent.
     # Also logs the response, and any content sent along with the response, in bytes and as text.
     # It will save the logs to the path given to the constructor.
     # Returns the response and the content received (as a tuple).
-    def sendRecvLogData(self, request: str, requestName: str, maxNumberOfPackets: int = 40, listenSize: int = 32768,
-                        maxRecv: int = 10) -> (list, list):
-        print(f"Handling request: {requestName}")
-        generalUtils.clearFileAndWrite(f"{self.logsFolderPath}{requestName}_request.txt", 'a', request)  # Request log
-        data: bytes = self.initialSendRecv2(request, requestName, maxRecv)
-        dataPackets: bytes = data + "\r\n----------------\r\n".encode()
-
-        print("Received response.")
-        httpResponseContent: str = data.decode(encoding="ISO-8859-1")
-        endOfRequest: int = findEndOfRequest(httpResponseContent)
-        httpResponseHeaders: str = httpResponseContent[:endOfRequest - 3]
-        httpResponseLines: list[str] = httpResponseHeaders.split("\r\n")
+    def sendRecvLog(self, request: str, requestName: str, ignoreExceptions: bool = True) -> (str, str):
+        logDataLines: bytes = bytes()
+        logData = bytes()
+        hasReceivedHeaders: bool = False
         isChunked: bool = False
+        headers = bytes()
+        content = bytes()
 
-        for i in range(len(httpResponseLines) - 1, -1, -1):
-            currentHeader: list[str] = httpResponseLines[i].split(':')
-            if currentHeader[0].lower() == "transfer-encoding" and "chunked" in currentHeader[1].lower():
-                print("Receiving chunked data:")
-                isChunked = True
+        self.__securedSocket.send(request.encode())
+        start: float = timer()
+        while True:
+            # if elapsed time since the request is greater than maxRecvTime, break.
+            if timer() - start > self.recvTimeOut:
+                if ignoreExceptions:
+                    print(f"{bcolors.WARNING}Time to receive response exceeds maxRecvTime: {self.recvTimeOut}. "
+                          f"Logging message and continuing{bcolors.ENDC}")
+                    break
+                else:
+                    raise TimeoutError(f"Time to receive response exceeds maxRecvTime: {self.recvTimeOut}.")
+            try:
+                currData: bytes = self.__securedSocket.recv(self.listenSize)
+                logDataLines += b"|" + currData
+                logData += currData
+            except TimeoutError:
+                print(f"{bcolors.WARNING}Response ended on timeout and was not caught by the loop. "
+                      f"Logging message and continuing.{bcolors.ENDC}")
                 break
-        # Data that is going to be received is chunked and the client will wait until all chunks are received.
+            except ssl.SSLWantReadError as e:
+                if ignoreExceptions:
+                    print(f"{bcolors.WARNING}Unknown failure to receive packet on request {requestName}. "
+                          f"Ignoring exception.{bcolors.ENDC}")
+                    continue
+                else:
+                    raise e
+            if hasReceivedHeaders and isChunked:
+                if currData.startswith(b"0\r\n") or currData.startswith(b"0\n") or currData.startswith(b"0\r"):
+                    print("Received end of chunked data.")
+                    break
+                content += currData
+            else:
+                content += currData
+                endOfHeaders = content.find(b'\r\n\r\n')
+                if endOfHeaders != -1:
+                    hasReceivedHeaders = True
+                    headers: bytes = content[:endOfHeaders]
+                    content: bytes = content[endOfHeaders + 4:]
+                    if b"Transfer-Encoding: chunked" in headers:
+                        isChunked = True
+                        print("Receiving chunked data.")
+
+        decodedContent = content.decode(encoding="ISO-8859-1")
+        decodedHeaders = headers.decode(encoding="ISO-8859-1")
         if isChunked:
-            decodedContent: str = httpResponseContent[endOfRequest + 7:]
-        # Means that there is additional data with the packet.
-        elif len(httpResponseContent) - endOfRequest > 6:
-            decodedContent = httpResponseContent[endOfRequest:].removeprefix('\r\n')
-        # Means that no data was received from the server, other than the HTTP response.
+            subbedContent: str = sub(r"[0-9a-f]{2,4}(\r\n|\n)", "****", decodedContent)
+            httpUtil.logData(subbedContent, f"{self.logsFolderPath}{requestName}_contentSubstituted.txt")
+            decodedContent: str = sub(r"[0-9a-f]{2,4}(\r\n|\n)", "", decodedContent)  # Remove chunk sizes
+
+        httpUtil.logData(logData, f"{self.logsFolderPath}{requestName}_packet.txt")
+        httpUtil.logData(logDataLines, f"{self.logsFolderPath}{requestName}_packetWithLines.txt")
+        httpUtil.logData(decodedHeaders, f"{self.logsFolderPath}{requestName}_headers.txt")
+        if "Content-Type: text/html" in decodedHeaders:
+            httpUtil.logData(decodedContent, f"{self.logsFolderPath}{requestName}_content.html")
         else:
-            decodedContent = ""
-        if isChunked:
-            i = 1
-            while i in range(1, maxNumberOfPackets):
-                try:
-                    currData = self.__securedSocket.recv(listenSize)
-                except TimeoutError:
-                    break
-                while currData == ''.encode():
-                    print("Received empty packet.")
-                    break
-                else:
-                    print("Received chunk:", i)
-                    data += currData
-                    dataPackets += currData + "\r\n----------------\r\n".encode()
-                if currData.decode(encoding="ISO-8859-1").strip('\r\n') == '0':
-                    pass
-                else:
-                    decodedContent: str = connectData(decodedContent, currData.decode(encoding="ISO-8859-1"))
-                if "</html>" in decodedContent:
-                    break
-                i += 1
-        generalUtils.clearFileAndWrite(f"{self.logsFolderPath}{requestName}_raw.txt", "wb",
-                                       data)  # Reply log in bytes
-        generalUtils.clearFileAndWrite(f"{self.logsFolderPath}{requestName}_rawPackets.txt", "wb",
-                                       dataPackets)  # Reply log in bytes
-        generalUtils.clearFileAndWrite(f"{self.logsFolderPath}{requestName}_response.txt", 'a',
-                                       httpResponseHeaders)  # Response log
-        if decodedContent != '':
-            generalUtils.clearFileAndWrite(f"{self.logsFolderPath}{requestName}_responseContent.html", 'a',
-                                           decodedContent)  # Response content log TODO Fix the data cutting.
-        sleep(0.5)
-        return httpResponseHeaders, decodedContent
+            httpUtil.logData(decodedContent, f"{self.logsFolderPath}{requestName}_content.txt")
+        return decodedHeaders, decodedContent
 
     # Returns a socket connected to the IP of the given URL (by dns).
     # The post of the connection is defaulted to 443 (HTTPS port).
     # If a socket is given, the connection will be closed if the host is changed.
     # Then, a new socket will be created, connected as described above, and returned.
     def changeHostIfNeeded(self, url: str, port: int = 443) -> None:
+        if not httpUtil.isValidURL(url):
+            raise ValueError(f"Invalid URL: {url}.")
         urlHost: str = httpUtil.getDomainFromUrl(url)
         lastHost = httpUtil.getDomainFromUrl(self.lastReferredURL)
         if self.__securedSocket is None or urlHost != lastHost:
@@ -253,9 +204,10 @@ class HttpConversation:
             self.__securedSocket.settimeout(self.recvTimeOut)
 
     def showInChrome(self, requestName: str) -> None:
-        filename = f"file:///{getcwd()}/{self.logsFolderPath}/{requestName}_responseContent.html"
-        print(f"Opening file: {filename}")
-        open_new_tab(filename)
+        filename = "file://" + getcwd() + "/" + self.logsFolderPath + requestName + "_content.html"
+        # filename = f"file://{path.realpath(filename)}"
+        print(filename)
+        webbrowser.get().open(filename, new=2)
 
     def printAllConnections(self) -> None:
         for connection in self.requestsSent:
@@ -288,21 +240,6 @@ def findEndOfRequest(HttpResponseContent: str) -> int:
             return endOfRequest
         endOfRequest += 1
     return endOfRequest
-
-
-# Connects two parts of chunked data from HTTP packets.
-# Removes the 4 hex digits from the beginning of the chunk which indicates the size of the incoming packet.
-# Also removes unneeded \r\n.
-# TODO Fix the data cutting.
-def connectData(oldData: str, newData: str) -> str:
-    try:
-        sizeLine = newData.split('\r\n')[0]
-        length = int(sizeLine, 16)  # This if for the try statement.
-        if newData[len(sizeLine):len(sizeLine) + 2].encode() == "\r\n".encode():
-            oldData = oldData.removesuffix("\r\n") + newData[7:]
-    except ValueError:
-        oldData = oldData.removesuffix("\r\n") + newData.removeprefix("\r\n")
-    return oldData
 
 
 # Returns the referral url given by the host in the Location HTTP header.

@@ -26,7 +26,7 @@ def getCredentialsFromFile(credentialsFilePath: str) -> tuple[str, str, str]:
 # This relates to the transfer between the login server of the university and the moodle server.
 # Without the info attached to the relevant request, the server won't recognize the client when logging in.
 def getSamlInfo(requestName: str) -> str:
-    with open(f"{logsFolderPath}{requestName}_responseContent.txt", 'r') as f:
+    with open(f"{logsFolderPath}{requestName}_content.html", 'r') as f:
         fileStr: str = ''.join(f.readlines())
         startSamlValue: int = fileStr.find("SAMLResponse") + 21
         endSamlValue: int = startSamlValue + fileStr[startSamlValue:].find('"')
@@ -38,7 +38,7 @@ def getSamlInfo(requestName: str) -> str:
 
 # When logging out the session key is needed to be sent to the server.
 def getSessKey(requestName):
-    with open(f"{logsFolderPath}{requestName}_responseContent.txt", 'r', encoding="ISO-8859-1") as f:
+    with open(f"{logsFolderPath}{requestName}_content.html", 'r', encoding="ISO-8859-1") as f:
         for line in f:
             if "logout.php" in line:
                 sessKey = line.strip().removeprefix('<a href="https://moodle.tau.ac.il/login/logout.php?sesskey=')
@@ -57,7 +57,7 @@ def printUrlCookies(cookiesUrlDict):
 
 
 def findAllHomework(requestName):
-    with open(f"{logsFolderPath}{requestName}_responseContent.txt", "r", encoding="ISO-8859-1") as f:
+    with open(f"{logsFolderPath}{requestName}_content.html", "r", encoding="ISO-8859-1") as f:
         identifier: str = "mod/assign"
         homeworkList: list[tuple] = []
         homeworkNum: int = 0
@@ -76,13 +76,13 @@ def findAllHomework(requestName):
 
 def main():
     with HttpConversation.HttpConversation(logsFolderPath) as conversation:
-        startURL = "https://moodle.tau.ac.il/"
+        # startURL = "https://moodle.tau.ac.il/"
         # clickLoginURL = "https://moodle.tau.ac.il/login/index.php"
-        connectionList = [("goToMoodle", "GET", startURL, None, None),]
+        # continueLoginURL = "https://nidp.tau.ac.il/nidp/saml2/sso?id=10&sid=0&option=credential&sid=0"
+        # connectionList = [("goToMoodle", "GET", startURL, None, None),
         #                   ("clickLogin", "GET", clickLoginURL, None, None),
-        #                   ("continueClickLogin", "POST",
-        #                    "https://nidp.tau.ac.il/nidp/saml2/sso?id=10&sid=0&option=credential&sid=0", None, None)]
-        conversation.startConversation(connectionList)
+        #                   ("continueClickLogin", "POST", continueLoginURL, None, None)]
+        # conversation.startConversation(connectionList)
         # sendFormURL = "https://nidp.tau.ac.il/nidp/saml2/sso?sid=0&sid=0&uiDestination=contentDiv"
         # credentials = getCredentialsFromFile(credentialsPath)
         # moodleCredentials = f"option=credential&Ecom_User_ID={credentials[0]}&Ecom_User_Pid={credentials[1]}&Ecom_Password={credentials[2]}"
@@ -117,11 +117,11 @@ def main():
         # conversation.startConversation(connectionList)
         # sessKey = getSessKey("9goToMoodleSaml1GET")
         # hwConnectionList: list[tuple] = findAllHomework("10goToHedvaGET")
-        # conversation.startConversation(hwConnectionList)
+        # #conversation.startConversation(hwConnectionList)
         # connectionList = [("logout", "GET", f"https://moodle.tau.ac.il/login/logout.php?sesskey={sessKey}", None, None)]
         # conversation.startConversation(connectionList)
         # conversation.printAllConnections()
-        # HttpConversation.showInChrome(input("Enter request name to show in Chrome: "))
+        conversation.showInChrome(input("Enter request name to show in Chrome: "))
 
 
 if __name__ == '__main__':

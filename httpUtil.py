@@ -1,4 +1,6 @@
 from datetime import datetime
+import generalUtils
+from re import match
 
 
 # Returns the current time using the HTTP time format
@@ -60,6 +62,15 @@ def getDomainFromUrl(url: str) -> str:
     return urlNoHttps[:urlNoHttps.find('/')]
 
 
-def isValidResponse(data: bytes) -> bool:
-    return len(data) > 14 and "HTTP/1.1".encode() in data and int(data.decode(encoding="ISO-8859-1")[9:12]) in \
-           range(100, 600)
+def logData(data, fileName: str):
+    if type(data) is bytes:
+        generalUtils.clearFileAndWrite(fileName, 'wb', data)
+    elif type(data) is str:
+        generalUtils.clearFileAndWrite(fileName, 'w', data)
+    else:
+        raise TypeError("Data must be bytes or str")
+
+
+def isValidURL(url: str) -> bool:
+    return bool(match(r"[-a-zA-Z0-9@:%.\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%\+.~#?&//=]*)", url)) or \
+           bool(match(r"https?:\/\/(www\.)?[-a-zA-Z0-9@:%.\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%\+.~#?&//=]*)", url))

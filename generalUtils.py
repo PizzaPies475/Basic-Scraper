@@ -3,7 +3,7 @@
 # If there is data to be written, writes bytes/string to the file, as per the writeType argument.
 # Write types that can be used are "wb", "a" and "w".
 # Using other types will raise a ValueError exception.
-def clearFileAndWrite(fileName, writeType, data=None):
+def clearFileAndWrite(fileName: str, writeType: str, data=None):
     with open(fileName, "w"):
         pass
     if data is not None:
@@ -15,3 +15,5 @@ def clearFileAndWrite(fileName, writeType, data=None):
                 toWriteTo.write(data)
         else:
             raise ValueError('Only "wb", "a" and "w" writeTypes accepted.')
+
+
