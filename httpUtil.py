@@ -16,8 +16,8 @@ def getCurrHttpTime() -> str:
 # With more advanced servers (Google, Facebook, etc.) the request might be invalid, and not work.
 # It will take the relevant cookies from the urlCookiesDict and shove them to the request,
 #   along with any more headers given.
-# NOTE: The function won't check if the cookies are valid (like if they are not expired) and assumes all the
-#   cookies in the dictionary are valid and assembled correctly.
+# NOTE: The function won't check if the cookies are correct and assumes all the cookies in the dictionary are valid and
+#   assembled correctly.
 # The default encoding requested is utf-8.
 def buildRequest(requestType: str, requestURL: str, content: str = None, urlCookiesDict: dict = None,
                  moreHeaders: dict = None, keepAlive=True, acceptEnc: str = "utf-8") -> str:

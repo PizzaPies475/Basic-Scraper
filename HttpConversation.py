@@ -24,19 +24,22 @@ class bcolors:
 
 class HttpConversation:
     # Also creates the folder if the path doesn't exist.
-    def __init__(self, logsFolderPath: str = "HTTP-Logs", maxReferrals: int = 5, recvTimeOut: int = 3,
+    def __init__(self, logsFolderPath: str = "HTTP-Logs", errorsFolderPath: str = "invalid_packets/", maxReferrals: int = 5, recvTimeOut: int = 3,
                  port: int = 443, listenSize: int = 4096) -> None:
-        if logsFolderPath == '':
+        if logsFolderPath == '' or logsFolderPath is None:
             logsFolderPath = "HTTP-Logs/"
+        if errorsFolderPath == '' or errorsFolderPath is None:
+            errorsFolderPath = "invalid_packets/"
         try:
             mkdir(logsFolderPath)
         except FileExistsError:
             pass
         try:
-            mkdir(f"{logsFolderPath}invalid_packets/")
+            mkdir(f"{logsFolderPath}{errorsFolderPath}")
         except FileExistsError:
             pass
         self.logsFolderPath: str = logsFolderPath
+        self.errorsFolderPath: str = errorsFolderPath
         self.currentRequestIndex: int = 0
         self.lastReferredURL: str = ''
         self.domainCookiesDict: dict = dict()  # {domain: {cookieName: Cookie}}
@@ -127,6 +130,7 @@ class HttpConversation:
         content = bytes()
 
         self.__securedSocket.send(request.encode())
+        print(f"Sending {requestName}")
         start: float = timer()
         while True:
             # if elapsed time since the request is greater than maxRecvTime, break.
@@ -136,6 +140,8 @@ class HttpConversation:
                           f"Logging message and continuing{bcolors.ENDC}")
                     break
                 else:
+                    httpUtil.logData(headers, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}headers.txt")
+                    httpUtil.logData(content, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}_content.txt")
                     raise TimeoutError(f"Time to receive response exceeds maxRecvTime: {self.recvTimeOut}.")
             try:
                 currData: bytes = self.__securedSocket.recv(self.listenSize)
@@ -151,6 +157,8 @@ class HttpConversation:
                           f"Ignoring exception.{bcolors.ENDC}")
                     continue
                 else:
+                    httpUtil.logData(headers, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}headers.txt")
+                    httpUtil.logData(content, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}_content.txt")
                     raise e
             if hasReceivedHeaders and isChunked:
                 if currData.startswith(b"0\r\n") or currData.startswith(b"0\n") or currData.startswith(b"0\r"):
@@ -159,7 +167,7 @@ class HttpConversation:
                 content += currData
             else:
                 content += currData
-                endOfHeaders = content.find(b'\r\n\r\n')
+                endOfHeaders = content.find(b"\r\n\r\n")
                 if endOfHeaders != -1:
                     hasReceivedHeaders = True
                     headers: bytes = content[:endOfHeaders]
@@ -167,6 +175,13 @@ class HttpConversation:
                     if b"Transfer-Encoding: chunked" in headers:
                         isChunked = True
                         print("Receiving chunked data.")
+                    elif b"Content-Type:" not in headers or b"Content-Length: 0" in headers:
+                        headers = content.split(b"\r\n\r\n")[0]
+                        break
+            if b"</html>" in content:
+                print("Received end of chunked data.")
+                content = content.split(b"</html>")[0] + b"</html>"
+                break
 
         decodedContent = content.decode(encoding="ISO-8859-1")
         decodedHeaders = headers.decode(encoding="ISO-8859-1")
@@ -204,16 +219,14 @@ class HttpConversation:
             self.__securedSocket.settimeout(self.recvTimeOut)
 
     def showInChrome(self, requestName: str) -> None:
-        filename = "file://" + getcwd() + "/" + self.logsFolderPath + requestName + "_content.html"
-        # filename = f"file://{path.realpath(filename)}"
-        print(filename)
+        filename = f"file://{getcwd()}/{self.logsFolderPath}{requestName}_content.html"
+        print(f"Opening html file:{filename}.")
         webbrowser.get().open(filename, new=2)
 
     def printAllConnections(self) -> None:
         for connection in self.requestsSent:
             print(connection)
 
-    # Returns the current packet index of the conversation.
     def getIndex(self) -> int:
         return self.currentRequestIndex
 
