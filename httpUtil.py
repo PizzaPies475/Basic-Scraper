@@ -74,3 +74,7 @@ def logData(data, fileName: str):
 def isValidURL(url: str) -> bool:
     return bool(match(r"[-a-zA-Z0-9@:%.\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%\+.~#?&//=]*)", url)) or \
            bool(match(r"https?:\/\/(www\.)?[-a-zA-Z0-9@:%.\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%\+.~#?&//=]*)", url))
+
+
+def getAllLinksFromHTML(html: str) -> list:
+    return list(set(re.findall(r'href="(.*?)"', html)))

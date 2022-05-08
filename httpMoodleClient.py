@@ -1,5 +1,6 @@
 import urllib.parse
 import HttpConversation
+from Connection import Connection
 
 # If the path is empty it will create a folder "HTTP-Logs".
 # If the specified path doesn't exist, a new folder will be created in the relevant path.
@@ -56,10 +57,10 @@ def printUrlCookies(cookiesUrlDict: dict) -> None:
         print()
 
 
-def findAllHomework(requestName: str) -> list[tuple]:
+def findAllHomework(requestName: str) -> list[Connection]:
     with open(f"{logsFolderPath}{requestName}_content.html", "r", encoding="ISO-8859-1") as f:
         identifier: str = "mod/assign"
-        homeworkList: list[tuple] = []
+        homeworkList: list[Connection] = []
         homeworkNum: int = 0
         for line in f:
             identifierIndex = line.find(identifier)
@@ -68,7 +69,7 @@ def findAllHomework(requestName: str) -> list[tuple]:
                 linkStartLocation: int = identifierIndex - 25
                 linkEndLocation: int = line.find('"', linkStartLocation)
                 homeworkLink = line[linkStartLocation:linkEndLocation]
-                homeworkList.append((f"{requestName[4:]}HW{homeworkNum}", "GET", homeworkLink, None, None))
+                homeworkList.append(Connection(f"{requestName[4:]}HW{homeworkNum}", "GET", homeworkLink))
                 identifierIndex: int = line.find(identifier, linkEndLocation)
         return homeworkList
 
@@ -78,24 +79,23 @@ def main():
         startURL = "https://moodle.tau.ac.il/"
         clickLoginURL = "https://moodle.tau.ac.il/login/index.php"
         continueLoginURL = "https://nidp.tau.ac.il/nidp/saml2/sso?id=10&sid=0&option=credential&sid=0"
-        connectionList = [("goToMoodle", "GET", startURL, None, None),
-                          ("clickLogin", "GET", clickLoginURL, None, None),
-                          ("continueClickLogin", "POST", continueLoginURL, None, None)]
+        connectionList = [Connection("goToMoodle", "GET", startURL),
+                          Connection("clickLogin", "GET", clickLoginURL),
+                          Connection("continueClickLogin", "POST", continueLoginURL)]
         conversation.startConversation(connectionList)
         sendFormURL = "https://nidp.tau.ac.il/nidp/saml2/sso?sid=0&sid=0&uiDestination=contentDiv"
         credentials = getCredentialsFromFile(credentialsPath)
         moodleCredentials = f"option=credential&Ecom_User_ID={credentials[0]}&Ecom_User_Pid={credentials[1]}&Ecom_Password={credentials[2]}"
         headersDict = {"X-Requested-With": "XMLHttpRequest",
                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
-        connectionList = [("sendForm", "POST", sendFormURL, moodleCredentials, headersDict),
-                          ("continueSendForm", "GET", "https://nidp.tau.ac.il/nidp/saml2/sso?sid=0", None, None)]
+        connectionList = [Connection("sendForm", "POST", sendFormURL, moodleCredentials, headersDict),
+                          Connection("continueSendForm", "GET", "https://nidp.tau.ac.il/nidp/saml2/sso?sid=0")]
         conversation.startConversation(connectionList)
         samlInfo = getSamlInfo(
             f"{conversation.getIndex() - 1}continueSendFormGET")  # Go to last request and get the SAML info.
         headersDict = {"Content-Type": "application/x-www-form-urlencoded"}
-        connectionList = [("goToMoodleSaml", "POST",
-                           "https://moodle.tau.ac.il/auth/saml2/sp/saml2-acs.php/moodle.tau.ac.il", samlInfo,
-                           headersDict)]
+        connectionList = [Connection("goToMoodleSaml", "POST",
+                                     "https://moodle.tau.ac.il/auth/saml2/sp/saml2-acs.php/moodle.tau.ac.il", samlInfo, headersDict)]
         conversation.startConversation(connectionList)
         headersDict = {"Sec-Fetch-Site": "same-origin",
                        "Sec-Fetch-Mode": "navigate",
@@ -106,18 +106,18 @@ def main():
                        "sec-ch-ua-mobile": '?0',
                        "sec-ch-ua-platform": '"Windows"'}
         connectionList = [
-            # ("goToTochna", "GET", "https://moodle.tau.ac.il/course/view.php?id=368215799", None, None)]
-            # ('goToMavnat', 'GET', 'https://moodle.tau.ac.il/course/view.php?id=368215899', None, headersDict),
-            # ('goToMadar', 'GET', 'https://moodle.tau.ac.il/course/view.php?id=509174512', None, headersDict),
-            ("goToHedva", "GET", "https://moodle.tau.ac.il/course/view.php?id=509174701", None, headersDict),
-            # ('goToStat', 'GET', 'https://moodle.tau.ac.il/course/view.php?id=509280199', None, headersDict),
-            # ('goToMalas', 'GET', 'https://moodle.tau.ac.il/course/view.php?id=512356101', None, headersDict)
+            # Connection("goToTochna", "GET", "https://moodle.tau.ac.il/course/view.php?id=368215799"), headers=headersDict),
+            # Connection("goToMavnat", "GET", "https://moodle.tau.ac.il/course/view.php?id=368215899", headers=headersDict),
+            # Connection("goToMadar", "GET", 'https://moodle.tau.ac.il/course/view.php?id=509174512', headers=headersDict),
+            Connection("goToHedva", "GET", "https://moodle.tau.ac.il/course/view.php?id=509174701", headers=headersDict),
+            # Connection("goToStat", :, 'https://moodle.tau.ac.il/course/view.php?id=509280199', headers=headersDict),
+            # Connection("goToMalas", "GET", 'https://moodle.tau.ac.il/course/view.php?id=512356101', headers=headersDict)
         ]
         conversation.startConversation(connectionList)
         sessKey = getSessKey("9goToMoodleSaml1GET")
-        hwConnectionList: list[tuple] = findAllHomework("10goToHedvaGET")
+        hwConnectionList: list[Connection] = findAllHomework("10goToHedvaGET")
         conversation.startConversation(hwConnectionList)
-        connectionList = [("logout", "GET", f"https://moodle.tau.ac.il/login/logout.php?sesskey={sessKey}", None, None)]
+        connectionList = [Connection("logout", "GET", f"https://moodle.tau.ac.il/login/logout.php?sesskey={sessKey}")]
         conversation.startConversation(connectionList)
         conversation.printAllConnections()
         #conversation.showInChrome(input("Enter request name to show in Chrome: "))
