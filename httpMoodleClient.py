@@ -1,6 +1,7 @@
 import urllib.parse
 import HttpConversation
 from Connection import Connection
+from Cookie import Cookie
 
 # If the path is empty it will create a folder "HTTP-Logs".
 # If the specified path doesn't exist, a new folder will be created in the relevant path.
@@ -47,14 +48,6 @@ def getSessKey(requestName: str) -> str:
                 f.close()
                 return sessKey
 
-
-# Just for checking the cookies are valid.
-def printUrlCookies(cookiesUrlDict: dict) -> None:
-    for host in cookiesUrlDict:
-        print("host:", host, end='\r\n')
-        for cookieName in cookiesUrlDict[host]:
-            print(f"    {cookiesUrlDict[host][cookieName]}")
-        print()
 
 
 def findAllHomework(requestName: str) -> list[Connection]:
