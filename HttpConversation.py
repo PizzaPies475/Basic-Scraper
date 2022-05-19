@@ -6,11 +6,12 @@ from socket import error as socket_error
 import webbrowser
 from os import getcwd, mkdir
 from timeit import default_timer as timer
-from ssl import SSLWantReadError, create_default_context
+from ssl import SSLWantReadError, create_default_context, SSLEOFError
 from Connection import Connection
 from typing import Union
 from queue import Queue
-from DomainTree import DomainTree, DirectoryNode
+from DomainTree import DomainTree
+from time import sleep
 
 
 class bcolors:
@@ -66,7 +67,7 @@ class HttpConversation:
         self.packetRecvTimeOut: int = packetRecvTimeOut
         self.responseRecvTimeOut: int = responseRecvTimeOut
         self.port: int = port
-        self.requestsSent: list = []
+        self.requestsSent: dict = dict()
         self.listenSize: int = listenSize
         self.currConnection: Connection = Connection("", "", "")
 
@@ -82,7 +83,6 @@ class HttpConversation:
             #  responseBody: str = response[1]
             if "Connection: close" in responseHeaders or "connection: close" in responseHeaders:
                 shouldClose = True
-            self.requestsSent.append(f"{self.currentRequestIndex}{self.currConnection} {self.currConnection.URL}")
             referredCount: int = 0
             while "Location:" in responseHeaders and referredCount < self.maxReferrals:
                 URL, referer = getReferralLink(responseHeaders, httpUtil.getDomainFromUrl(self.currConnection.URL))
@@ -94,25 +94,84 @@ class HttpConversation:
                                                             options=options)
                 responseHeaders: str = response[0]
                 #  responseBody: str = response[1]
-                self.requestsSent.append(f"{self.currentRequestIndex}{self.currConnection}")
                 referredCount += 1
                 if not referredCount < self.maxReferrals:
                     raise ValueError(f"Number of referrals exceeded: {self.maxReferrals} (given max).")
 
-    def mapDomain(self, domain: Union[str, Connection], log: bool = False) -> None:
+    def mapDomain(self, domain: Union[str, Connection], log: bool = False, acceptedEnc: str = "utf-8",
+                  options: bool = False) -> tuple:
         connectionQueue: Queue[Connection] = Queue()
         baseCategories: list[str] = ["External", "Images", "Videos", "Music", "scripts", "CSS", "JS", "Json", "Fonts",
                                      "Queries"]
+        categories: {str: list[str]} = {"External": [], "Files": []}
         domainTree: DomainTree = DomainTree(domain)
+        externalUrls: dict = {}
         shouldClose = False
         if isinstance(domain, str):
             if httpUtil.isValidURL(domain):
                 domainName = httpUtil.getDomainName(domain)
                 domain: Connection = Connection(domainName, 'GET', domain)
+            else:
+                raise ValueError(f"{domain} is not a valid URL.")
+        connectionQueue.put(domain)
+        while not connectionQueue.empty():
+            self.currConnection = connectionQueue.get()
+            response: tuple[str, str] = self.__converse(shouldClose, acceptedEnc, log=log, options=options, ignoreExceptions=True)
+            responseHeaders: str = response[0]
+            responseBody: str = response[1]
+            linksList: list[str] = httpUtil.getLinksFromHTML(responseBody)
+            for link in linksList:
+                if not httpUtil.isValidURL(link):
+                    raise ValueError(f"({link}) is not a valid URL.")
+                if httpUtil.isSameOrigin(link, domain.URL) and not httpUtil.isFileUrl(link) and link not in self.requestsSent:
+                    connectionName = httpUtil.getDomainName(link)
+                    domainTree.put(link)
+                    connectionQueue.put(Connection(connectionName, 'GET', link))
+                elif httpUtil.isFileUrl(link):
+                    categories["Files"].append(link)
+                if not httpUtil.isSameOrigin(link, domain.URL):
+                    categories["External"].append(link)
+            if "Connection: close" in responseHeaders or "connection: close" in responseHeaders:
+                shouldClose = True
+            referredCount: int = 0
+            while "Location:" in responseHeaders and referredCount < self.maxReferrals:
+                URL, referer = getReferralLink(responseHeaders, httpUtil.getDomainFromUrl(self.currConnection.URL))
+                self.currConnection: Connection = Connection(f"{self.currConnection}{referredCount}", 'GET',
+                                                             URL)
+                isReferred = True
+                print(f"Referring to {URL}")
+                response: tuple[str, str] = self.__converse(shouldClose, acceptedEnc=acceptedEnc, referer=referer,
+                                                            options=options, log=log, referred=isReferred, ignoreExceptions=True)
+                responseHeaders: str = response[0]
+                responseBody: str = response[1]
+                linksList: list[str] = httpUtil.getLinksFromHTML(responseBody)
+                for link in linksList:
+                    if not httpUtil.isValidURL(link):
+                        raise ValueError(f"({link}) is not a valid URL.")
+                    if httpUtil.isSameOrigin(link, domain.URL) and not httpUtil.isFileUrl(link):
+                        connectionName = httpUtil.getDomainName(link)
+                        domainTree.put(link)
+                        connectionQueue.put(Connection(connectionName, 'GET', link))
+                    elif httpUtil.isFileUrl(link):
+                        categories["Files"].append(link)
+                    else:
+                        categories["External"].append(link)
+                if "Connection: close" in responseHeaders or "connection: close" in responseHeaders:
+                    shouldClose = True
+                referredCount += 1
+                if not referredCount < self.maxReferrals:
+                    raise ValueError(f"Number of referrals exceeded: {self.maxReferrals} (given max).")
+        return domainTree, categories
 
-    #
     def __converse(self, shouldClose: bool, acceptedEnc: str = 'utf-8', ignoreExceptions: bool = True, log: bool = True,
-                   referer: str = "", options: bool = False) -> tuple:
+                   referer: str = "", options: bool = False, referred: bool = False, isError: bool = False) -> tuple[str, str]:
+
+        if self.currConnection.URL in self.requestsSent:
+            if ignoreExceptions:
+                return "", ""
+            else:
+                raise ValueError(f"Request already sent: {self.currConnection.URL}")
+
         self.__changeHostIfNeeded(shouldClose)
         if self.domainCookiesDict is not None and self.currConnection.URL in self.domainCookiesDict:
             checkCookies(self.domainCookiesDict[self.currConnection.URL])
@@ -120,27 +179,28 @@ class HttpConversation:
                                              content=self.currConnection.content, urlCookiesDict=self.domainCookiesDict,
                                              moreHeaders=self.currConnection.headers, acceptEnc=acceptedEnc,
                                              referer=referer, options=options)
-        responseHeaders, responseBody = self.sendRecvLog(request, ignoreExceptions=ignoreExceptions, log=log)
-        self.getSetCookiesDomain()
+        responseHeaders, responseBody = self.sendRecvLog(request, ignoreExceptions=ignoreExceptions, log=log,
+                                                         referred=referred, isError=isError)
+        self.requestsSent[self.currConnection.URL] = self.currConnection.URL
+        self.getSetCookiesDomain(responseHeaders)
         self.lastReferredURL: str = self.currConnection.URL
         self.currentRequestIndex += 1
+        sleep(0.5)
         return responseHeaders, responseBody
 
-    def getSetCookiesDomain(self) -> None:
-        currRequestName = f"{self.currentRequestIndex}{self.currConnection}"
+    def getSetCookiesDomain(self, responseHeaders: str) -> None:
         URL = self.currConnection.URL
         if httpUtil.getDomainFromUrl(URL) not in self.domainCookiesDict:
             self.domainCookiesDict[httpUtil.getDomainFromUrl(URL)] = dict()
-        with open(f"{self.logsFolderPath}{currRequestName}_headers.txt", "rb") as responseFile:
-            cookiesList: list = []
-            for line in responseFile:
-                if "Set-Cookie:" in line.decode(encoding="ISO-8859-1") or \
-                        "set-cookie:" in line.decode(encoding="ISO-8859-1"):
-                    cookiesList.append(line.decode(encoding="ISO-8859-1").removeprefix("Set-Cookie: ").removeprefix("set-cookie: ").strip())
-            for cookieLine in cookiesList:
-                currentCookie: Cookie = Cookie(cookieLine, URL)
-                if currentCookie.getValue() != "deleted" and not currentCookie.isExpired():
-                    self.domainCookiesDict[httpUtil.getDomainFromUrl(URL)][currentCookie.getName()] = currentCookie
+        responseLines = responseHeaders.split("\r\n")
+        cookiesList: list = []
+        for header in responseLines:
+            if "Set-Cookie:" in header or "set-cookie:" in header:
+                cookiesList.append(header.removeprefix("Set-Cookie: ").removeprefix("set-cookie: ").strip())
+        for cookieLine in cookiesList:
+            currentCookie: Cookie = Cookie(cookieLine, URL)
+            if currentCookie.getValue() != "deleted" and not currentCookie.isExpired():
+                self.domainCookiesDict[httpUtil.getDomainFromUrl(URL)][currentCookie.getName()] = currentCookie
 
     # Sends the data to the given socket, receives the reply and logs the messages.
     # Does minimal parsing to the data, which separates the HTTP response from the HTTP body.
@@ -148,8 +208,12 @@ class HttpConversation:
     # Also logs the response, and any content sent along with the response, in bytes and as text.
     # It will save the logs to the path given to the constructor.
     # Returns the headers and the body as a tuple.
-    def sendRecvLog(self, request: str, ignoreExceptions: bool = True, log: bool = True) -> (str, str):
+    def sendRecvLog(self, request: str, ignoreExceptions: bool = True, log: bool = True,
+                    referred: bool = False, isError: bool = False) -> (str, str):
         requestName = f"{self.currentRequestIndex}{self.currConnection}"
+        requestType: str = self.currConnection.requestType
+        if referred:
+            requestName += "referred"
         logDataLines: bytes = bytes()
         logDataAsIs = bytes()
         hasReceivedHeaders: bool = False
@@ -157,8 +221,18 @@ class HttpConversation:
         headers = bytes()
         body = bytes()
 
-        self.__securedSocket.send(request.encode())
-        httpUtil.logData(request, f"{self.logsFolderPath}{requestName}_request.txt", log=log)
+        try:
+            self.__securedSocket.send(request.encode())
+        except SSLEOFError:
+            if ignoreExceptions and not isError:
+                print(f"{bcolors.WARNING}Error on request to: {self.currConnection.URL} {bcolors.ENDC}")
+                return self.__converse(True, ignoreExceptions=ignoreExceptions, log=log, referred=referred)
+            else:
+                requestFileName: str = f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}_request.txt"
+                httpUtil.logData(request, requestFileName)
+                raise SSLEOFError(f"Could not send request to: {self.currConnection.URL}. "
+                                  f"Request logged at: {requestFileName}.")
+        httpUtil.logData(request, f"{self.logsFolderPath}{requestName}{requestType}_request.txt", log=log)
         print(f"Sending {requestName}")
         start: float = timer()
         while True:
@@ -170,8 +244,8 @@ class HttpConversation:
                           f"{bcolors.ENDC}")
                     break
                 else:
-                    httpUtil.logData(headers, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}headers.txt")
-                    httpUtil.logData(body, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}_body.txt")
+                    httpUtil.logData(headers, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}{requestType}_headers.txt")
+                    httpUtil.logData(body, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}{requestType}_body.txt")
                     raise TimeoutError(f"Time to receive response exceeds maxRecvTime: {self.responseRecvTimeOut}.")
             try:
                 currData: bytes = self.__securedSocket.recv(self.listenSize)
@@ -187,9 +261,9 @@ class HttpConversation:
                           f"Ignoring exception.{bcolors.ENDC}")
                     continue
                 else:
-                    httpUtil.logData(headers, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}headers.txt",
+                    httpUtil.logData(headers, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}{requestType}_headers.txt",
                                      log)
-                    httpUtil.logData(body, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}_body.txt", log)
+                    httpUtil.logData(body, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}{requestType}_body.txt", log)
                     raise e
             if hasReceivedHeaders and isChunked:
                 if currData.startswith(b"0\r\n") or currData.startswith(b"0\n") or currData.startswith(b"0\r"):
@@ -212,7 +286,7 @@ class HttpConversation:
             if b"</html>" in body:
                 print("Received end of chunked data.")
                 rest = b"".join(body.split(b"</html>")[1:])
-                httpUtil.logData(rest, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}_remainder.txt")
+                httpUtil.logData(rest, f"{self.logsFolderPath}{self.errorsFolderPath}{requestName}{requestType}_remainder.txt", log)
                 body = body.split(b"</html>")[0] + b"</html>"
                 break
 
@@ -220,16 +294,16 @@ class HttpConversation:
         decodedHeaders: str = headers.decode(encoding="ISO-8859-1")
         if isChunked:
             subbedBody: str = sub(r"[0-9a-fA-F]{2,8}(\r\n|\n)", "****", decodedBody)
-            httpUtil.logData(subbedBody, f"{self.logsFolderPath}{requestName}_bodySubstituted.txt", log)
+            httpUtil.logData(subbedBody, f"{self.logsFolderPath}{requestName}{requestType}_bodySubstituted.txt", log)
             decodedBody: str = sub(r"[0-9a-fA-F]{2,8}(\r\n|\n)", "", decodedBody)  # Remove chunk sizes
 
-        httpUtil.logData(logDataAsIs, f"{self.logsFolderPath}{requestName}_packet.txt", log)
-        httpUtil.logData(logDataLines, f"{self.logsFolderPath}{requestName}_packetWithLines.txt", log)
-        httpUtil.logData(decodedHeaders, f"{self.logsFolderPath}{requestName}_headers.txt", log)
+        httpUtil.logData(logDataAsIs, f"{self.logsFolderPath}{requestName}{requestType}_packet.txt", log)
+        httpUtil.logData(logDataLines, f"{self.logsFolderPath}{requestName}{requestType}_packetWithLines.txt", log)
+        httpUtil.logData(decodedHeaders, f"{self.logsFolderPath}{requestName}{requestType}_headers.txt", log)
         if "Content-Type: text/html" in decodedHeaders or "content-type: text/html" in decodedHeaders:
-            httpUtil.logData(decodedBody, f"{self.logsFolderPath}{requestName}_body.html", log)
+            httpUtil.logData(decodedBody, f"{self.logsFolderPath}{requestName}{requestType}_body.html", log)
         else:
-            httpUtil.logData(decodedBody, f"{self.logsFolderPath}{requestName}_body.txt", log)
+            httpUtil.logData(decodedBody, f"{self.logsFolderPath}{requestName}{requestType}_body.txt", log)
         return decodedHeaders, decodedBody
 
     # Returns a socket connected to the IP of the given URL (by dns).
@@ -269,7 +343,7 @@ class HttpConversation:
         return self.currentRequestIndex
 
     def getCurrConnectionName(self) -> str:
-        return f"{self.currentRequestIndex-1}{self.currConnection}"
+        return f"{self.currentRequestIndex - 1}{self.currConnection}"
 
     def getCookies(self) -> {str: {str: Cookie}}:
         return self.domainCookiesDict
@@ -285,23 +359,6 @@ class HttpConversation:
         return False
 
 
-def findEndOfRequest(HttpResponseBody: str) -> int:
-    endOfRequest = 0
-    HttpResponseLen = len(HttpResponseBody)
-    while endOfRequest in range(HttpResponseLen):
-        endLineCount = 0
-        currEncodedLetter = HttpResponseBody[endOfRequest].encode()
-        while endOfRequest < HttpResponseLen and (
-                currEncodedLetter == '\r'.encode() or currEncodedLetter == '\n'.encode()) and endLineCount < 3:
-            endLineCount += 1
-            endOfRequest += 1
-            currEncodedLetter = HttpResponseBody[endOfRequest].encode()
-        if endLineCount == 3:
-            return endOfRequest
-        endOfRequest += 1
-    return endOfRequest
-
-
 # Returns the referral url given by the host in the Location HTTP header.
 def getReferralLink(data: str, domain: str) -> tuple[str, str]:
     referer: str = ""
@@ -311,7 +368,8 @@ def getReferralLink(data: str, domain: str) -> tuple[str, str]:
     referrerPolicyStart: int = data.find("Referrer-Policy: ")
     if referrerPolicyStart != -1:
         referrerPolicyEnd: int = data[referrerPolicyStart:].find("\r\n")
-        refererPolicy: str = data[referrerPolicyStart:referrerPolicyStart + referrerPolicyEnd].removeprefix("Referrer-Policy: ")
+        refererPolicy: str = data[referrerPolicyStart:referrerPolicyStart + referrerPolicyEnd].removeprefix(
+            "Referrer-Policy: ")
         if refererPolicy == "no-referrer":
             referer = ""
         elif refererPolicy == "no-referrer-when-downgrade":

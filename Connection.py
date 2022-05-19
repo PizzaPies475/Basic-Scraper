@@ -8,4 +8,4 @@ class Connection(object):
         self.headers: dict[str:str] = headers
 
     def __str__(self):
-        return f"{self.name}{self.requestType}"
+        return f"{self.name}"

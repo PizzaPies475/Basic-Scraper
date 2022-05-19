@@ -13,18 +13,23 @@ def getCurrHttpTime() -> str:
 
 
 def getLinksFromHTML(html: str) -> list[str]:
-    import re
     if html.startswith("file://"):
         htmlStrip = html.removeprefix("file://")
         with open(htmlStrip, 'r', encoding='ISO-8859-1') as f:
             content: str = f.read()
     else:
         content: str = html
-    URLs: list = re.findall('"((http)s?://.*?)"', content)
-    links: list[str] = []
+    URLs: list[str] = findall(r"(https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|www\.["
+                              r"a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|https?:\/\/(?:www\.|(?!www))["
+                              r"a-zA-Z0-9]+\.[^\s]{2,}|www\.[a-zA-Z0-9]+\.[^\s]{2,})", content)
+    linkList: list[str] = []
     for url in URLs:
-        links.append(url[0])
-    return links
+        url = url.strip("'")
+        if '"' in url:
+            linkList.append(url.split('"')[0])
+        else:
+            linkList.append(url)
+    return linkList
 
 
 # This function builds a VERY basic request.
@@ -55,7 +60,8 @@ def buildRequest(requestType: str, requestURL: str, content: str = None, urlCook
     if moreHeaders is not None:
         for header in moreHeaders:
             request += f"{header}: {moreHeaders[header]}\r\n"
-    request += "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.54 Safari/537.36" \
+    request += "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " \
+               "Chrome/101.0.4951.54 Safari/537.36\r\n" \
                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;" \
                "q=0.8,application/signed-exchange;v=b3;q=0.9\r\n"
     if acceptEnc is not None and acceptEnc != "":
@@ -161,21 +167,17 @@ def isSameOrigin(url1: str, url2: str) -> bool:
     return url1Domain == url2Domain
 
 
-def getDomainName(url: str) -> str:
-    if '/' in url:
-        domainList: list[str] = url.split(".")
-        if "co" in domainList:
-            domainName: str = domainList[domainList.index("co") - 1]
-        elif "com" in domainList:
-            domainName: str = domainList[domainList.index("com") - 1]
-        elif "org" in domainList:
-            domainName: str = domainList[domainList.index("org") - 1]
-        elif "net" in domainList:
-            domainName: str = domainList[domainList.index("net") - 1]
-        elif "edu" in domainList:
-            domainName: str = domainList[domainList.index("edu") - 1]
-        elif "gov" in domainList:
-            domainName: str = domainList[domainList.index("gov") - 1]
-        else:
-            domainName: str = url
-    return domainName
+def getDomainName(url: str) -> str:  # TODO Return more significant domain name
+    return url.removeprefix("https://").removeprefix("http://").replace('?', ''). \
+        replace('/', '_').replace(':', '').replace("\/", '')[:40]
+
+
+def isFileUrl(url: str) -> bool:
+    commonMimeTypes: list[str] = [".aac", ".avif", ".avi", ".bmp", ".doc", ".docx", ".flv", ".gif", ".ico", ".jpeg",
+                                  ".jpg", ".mid", ".midi", ".mp3", ".mp4", ".mpeg", ".mpg", ".oga", ".ogv", ".opus",
+                                  ".otf", ".png", ".pdf", ".svg", ".swf", ".tif", ".tiff", ".ts", ".ttf", ".wav",
+                                  ".weba", ".webm", "webp", ".woff", ".woff2", ".3gp", ".3g2", ".js"]
+    for mimeType in commonMimeTypes:
+        if mimeType in url:
+            return True
+    return False
