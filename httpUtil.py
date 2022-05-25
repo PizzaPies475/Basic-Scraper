@@ -4,6 +4,77 @@ from re import match, findall
 from Cookie import Cookie
 
 
+class Request:
+
+    def __init__(self, requestType: str, requestURL: str, content: str = None, urlCookiesDict: dict = None,
+                 moreHeaders: dict = None, keepAlive: bool = True, acceptEnc: str = "utf-8", referer: str = "",
+                 options: bool = False):
+        self.properties = {
+            "requestType": requestType,
+            "requestURL": requestURL,
+            "content": content,
+            "urlCookiesDict": urlCookiesDict,
+            "moreHeaders": moreHeaders,
+            "keepAlive": keepAlive,
+            "acceptEnc": acceptEnc,
+            "referer": referer,
+            "options": options
+        }
+
+    def __str__(self):
+        requestStr: str = f"{self.properties['requestType']} {self.properties['requestURL']} HTTP/1.1\r\n"
+        requestStr += f"Host: {getDomainFromUrl(self.properties['requestURL'])}\r\n"
+        requestStr += f"Connection: {'keep-alive' if self.properties['keepAlive'] else 'close'}\r\n"
+        if self.properties['referer'] != "" and self.properties['referer'] is not None:
+            requestStr += f"Referer: {self.properties['referer']}\r\n"
+        requestStr += "Pragma: no-cache\r\n" \
+                      "Cache-Control: no-cache\r\n" \
+                      "Upgrade-Insecure-Requests: 1\r\n"
+        if self.properties['urlCookiesDict'] is not None and getDomainFromUrl(self.properties['requestURL']) in \
+                self.properties['urlCookiesDict']:
+            requestStr += cookiesDictToStr(
+                self.properties['urlCookiesDict'][getDomainFromUrl(self.properties['requestURL'])],
+                self.properties['requestURL'])
+        if self.properties['content'] is not None and self.properties['content'] != '':
+            requestStr += f"Content-Length: {len(self.properties['content'])}\r\n"
+        if self.properties['requestType'] == "POST" and (
+                self.properties['content'] == '' or self.properties['content'] is None):
+            requestStr += "Content-Length: 0\r\n"
+        if self.properties['moreHeaders'] is not None:
+            for header in self.properties['moreHeaders']:
+                requestStr += f"{header}: {self.properties['moreHeaders'][header]}\r\n"
+        requestStr += "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " \
+                      "Chrome/101.0.4951.54 Safari/537.36\r\n" \
+                      "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;" \
+                      "q=0.8,application/signed-exchange;v=b3;q=0.9\r\n"
+        if self.properties['acceptEnc'] is not None and self.properties['acceptEnc'] != "":
+            requestStr += f"Accept-Encoding: {self.properties['acceptEnc']}\r\n"
+        if self.properties['options']:
+            requestStr += 'sec-ch-ua: " Not A;Brand";v="99", "Chromium";v="101", "Google Chrome";v="101"\r\n' \
+                          'sec-ch-ua-mobile: ?0\r\n' \
+                          'sec-ch-ua-platform: "Windows"\r\n' \
+                          'sec-fetch-dest: document\r\n' \
+                          'sec-fetch-mode: navigate\r\n' \
+                          'sec-fetch-site: none\r\n' \
+                          'sec-fetch-user: ?1\r\n' \
+                          'sec-fetch-user: ?1\r\n'
+        requestStr += "Accept-Language: en-GB,en;q=0.9\r\n" \
+                      "\r\n"
+
+        if self.properties["content"] is not None:
+            requestStr += self.properties["content"]
+        return requestStr
+
+    def __setitem__(self, key, value):
+        if key in self.properties:
+            self.properties[key] = value
+        else:
+            raise KeyError(f"{key} is not a valid key")
+
+    def __getitem__(self, item):
+        return self.properties[item]
+
+
 # Returns the current time using the HTTP time format
 #   (as explained in: https://httpwg.org/specs/rfc7231.html#http.date).
 def getCurrHttpTime() -> str:
@@ -24,11 +95,15 @@ def getLinksFromHTML(html: str) -> list[str]:
                               r"a-zA-Z0-9]+\.[^\s]{2,}|www\.[a-zA-Z0-9]+\.[^\s]{2,})", content)
     linkList: list[str] = []
     for url in URLs:
-        url = url.strip("'")
-        if '"' in url:
-            linkList.append(url.split('"')[0])
-        else:
-            linkList.append(url)
+        normURL = url.strip("'")
+        if '"' in normURL:
+            normURL = normURL.split('"')[0]
+        if "#" in normURL:  # Points to a specific part of the page, no need for a request.
+            normURL = normURL.split("#")[0]
+        normURL = normalizeURL(normURL)
+        if not isValidURL(normURL):
+            raise ValueError(f"{normURL} is not a valid URL")
+        linkList.append(normURL)
     return linkList
 
 
@@ -120,7 +195,11 @@ def logData(data, fileName: str, log: bool = True):
         elif type(data) is str:
             generalUtils.clearFileAndWrite(fileName, 'w', data)
         else:
-            raise TypeError("Data must be bytes or str")
+            try:
+                generalUtils.clearFileAndWrite(fileName, 'w', str(data))
+            except Exception as e:
+                print(e)
+                print("Couldn't write to file: " + fileName)
 
 
 def isValidURL(url: str) -> bool:
@@ -169,7 +248,7 @@ def isSameOrigin(url1: str, url2: str) -> bool:
 
 def getDomainName(url: str) -> str:  # TODO Return more significant domain name
     return url.removeprefix("https://").removeprefix("http://").replace('?', ''). \
-        replace('/', '_').replace(':', '').replace("\/", '')[:40]
+               replace('/', '_').replace(':', '').replace("\/", '')[:40]
 
 
 def isFileUrl(url: str) -> bool:
@@ -181,3 +260,14 @@ def isFileUrl(url: str) -> bool:
         if mimeType in url:
             return True
     return False
+
+
+def normalizeURL(url: str) -> str:
+    if url.startswith("http://") or url.startswith("https://"):
+        if url.find("/", 8) == -1:
+            url += "/"
+    else:
+        url = f"https://{url}"
+        if url.find("/", 8) == -1:
+            url += "/"
+    return url
