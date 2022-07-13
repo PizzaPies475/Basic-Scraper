@@ -1,7 +1,5 @@
 import urllib.parse
 import HttpConversation
-from Connection import Connection
-from Cookie import Cookie
 
 # If the path is empty it will create a folder "HTTP-Logs".
 # If the specified path doesn't exist, a new folder will be created in the relevant path.

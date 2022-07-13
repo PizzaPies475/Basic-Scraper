@@ -1,5 +1,6 @@
 # Test files
 tester.py
+HttpConversationTester.py
 Test Logs/
 
 # HTTP logs
