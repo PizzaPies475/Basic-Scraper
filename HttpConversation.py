@@ -6,7 +6,7 @@ import os
 from time import sleep
 
 
-class bcolors:
+class bColors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
     OKCYAN = '\033[96m'
@@ -34,7 +34,7 @@ class HttpConversation:
         self.acceptEnc: str = acceptEncoding
         self.log: bool = log
         self.connectionList: list[Connection] = []
-        self.recvSize: int = recvSize
+        self.receiveSize: int = recvSize
         self.totalData: bytes = b""
         self.logLocation: str = logLocation
         self.maxReferrals: int = maxReferrals
@@ -64,7 +64,7 @@ class HttpConversation:
                 data = self.__sendRecv()
                 self.currConnection.response = parseResponse(data.decode("ISO-8859-1"), self.currConnection.url)
                 break
-            except IndexError as e:
+            except IndexError:
                 retryCounter += 1
         if self.log:
             self.__logData(self.currConnection.response, f"{self.currIndex}{self.currConnection.name}_response.txt")
@@ -128,12 +128,12 @@ class HttpConversation:
         isHtml: bool = False
         while b"0\r\n\r\n" not in data:
             try:
-                if self.recvSize > 0:
-                    data += self.__clientSocket.recv(self.recvSize)
+                if self.receiveSize > 0:
+                    data += self.__clientSocket.recv(self.receiveSize)
                 else:
                     data += self.__clientSocket.recv()
             except TimeoutError:
-                print(f"{bcolors.WARNING}Packet receive ended on timeout.{bcolors.ENDC}")
+                print(f"{bColors.WARNING}Packet receive ended on timeout.{bColors.ENDC}")
                 break
             if not isHtml:
                 if b"<html" in data:
@@ -163,16 +163,16 @@ class HttpConversation:
         statusLine = f"{self.currConnection.response.statusCode} {self.currConnection.response.statusMessage}"
         match int(self.currConnection.response.statusCode) // 100:
             case 1:
-                statusLine = f"{bcolors.OKBLUE}{statusLine}"
+                statusLine = f"{bColors.OKBLUE}{statusLine}"
             case 2:
-                statusLine = f"{bcolors.OKGREEN}{statusLine}"
+                statusLine = f"{bColors.OKGREEN}{statusLine}"
             case 3:
-                statusLine = f"{bcolors.WARNING}{statusLine}"
+                statusLine = f"{bColors.WARNING}{statusLine}"
             case 4:
-                statusLine = f"{bcolors.FAIL}{statusLine}"
+                statusLine = f"{bColors.FAIL}{statusLine}"
             case 5:
-                statusLine = f"{bcolors.FAIL}{statusLine}"
-        print(f"Status code: {statusLine}{bcolors.ENDC}")
+                statusLine = f"{bColors.FAIL}{statusLine}"
+        print(f"Status code: {statusLine}{bColors.ENDC}")
 
     def mapDomain(self, url: Union[str, URL], mapSize: int = 1, sleepTime: float = 0) -> None:
         if isinstance(url, str):
@@ -199,7 +199,7 @@ class HttpConversation:
             for connection in connectionQueue:
                 self.mapDomain(connection.url, mapSize - 1)
         if mapSize == 0:
-            print(f"{bcolors.OKGREEN}Done.{bcolors.ENDC}")
+            print(f"{bColors.OKGREEN}Done.{bColors.ENDC}")
 
     def __enter__(self):
         return self

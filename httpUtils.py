@@ -319,7 +319,16 @@ def parseResponse(responseString: str, url: URL) -> Response:
         headerName = headerName.lower()
         headerValue = headerValue.strip()
         if headerName == "set-cookie":
-            response.cookies.append(Cookie(headerValue, url.domain))
+            currentCookie: Cookie = Cookie(headerValue, url.domain)
+            isFound: bool = False
+            for i, cookie in enumerate(response.cookies):
+                if cookie.name == currentCookie.name and (cookie.value.lower() == "deleted" or cookie.isExpired()):
+                    response.cookies[i] = currentCookie
+                    isFound = True
+                    break
+            if not isFound:
+                response.cookies.append(currentCookie)
+            response.cookies.append(currentCookie)
         response.headers[headerName] = headerValue
     response.body = ''.join(responseParts[1:])
     return response

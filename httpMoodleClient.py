@@ -69,54 +69,54 @@ def main():
     with HttpConversation.HttpConversation() as conversation:
         startURL = "https://moodle.tau.ac.il/"
         clickLoginURL = "https://moodle.tau.ac.il/login/index.php"
-        continueLoginURL = "https://nidp.tau.ac.il/nidp/saml2/sso?id=10&sid=0&option=credential&sid=0"
+        # continueLoginURL = "https://nidp.tau.ac.il/nidp/saml2/sso?id=10&sid=0&option=credential&sid=0"
         connectionList = [Connection(startURL, "GET", "goToMoodle"),
-                          Connection(clickLoginURL, "GET", "clickLogin"),
-                          Connection(continueLoginURL, "POST", "continueClickLogin")]
+                          Connection(clickLoginURL, "GET", "clickLogin"),]
+                          # Connection(continueLoginURL, "POST", "continueClickLogin")]
         for connection in connectionList:
             conversation.converse(connection)
-        sendFormURL = "https://nidp.tau.ac.il/nidp/saml2/sso?sid=0&sid=0&uiDestination=contentDiv"
-        credentials = getCredentialsFromFile(credentialsPath)
-        moodleCredentials = f"option=credential&Ecom_User_ID={credentials[0]}&Ecom_User_Pid={credentials[1]}&" \
-                            f"Ecom_Password={credentials[2]}"
-        headersDict = {"X-Requested-With": "XMLHttpRequest",
-                       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
-        connectionList = [Connection(sendFormURL, "POST", "sendForm", moodleCredentials, headersDict),
-                          Connection("https://nidp.tau.ac.il/nidp/saml2/sso?sid=0", "GET", "continueSendForm")]
-        for connection in connectionList:
-            conversation.converse(connection)
-        samlInfo = getSamlInfo(
-            f"{conversation.currIndex}continueSendForm")  # Go to last request and get the SAML info.
-        headersDict = {"Content-Type": "application/x-www-form-urlencoded"}
-        connectionList = [Connection("https://moodle.tau.ac.il/auth/saml2/sp/saml2-acs.php/moodle.tau.ac.il", "POST",
-                                     "goToMoodleSaml", samlInfo, headersDict)]
-        for connection in connectionList:
-            conversation.converse(connection)
-        headersDict = {"Sec-Fetch-Site": "same-origin",
-                       "Sec-Fetch-Mode": "navigate",
-                       "Sec-Fetch-User": "?1",
-                       "Sec-Fetch-Dest": "document",
-                       "Referer": "https://moodle.tau.ac.il/my/",
-                       "sec-ch-ua": '" Not A;Brand";v = "99", "Chromium";v = "98", "Google Chrome";v = "98"',
-                       "sec-ch-ua-mobile": '?0',
-                       "sec-ch-ua-platform": '"Windows"'}
-        connectionList = [
-            # Connection("https://moodle.tau.ac.il/course/view.php?id=368215799", "GET", "goToTochna", headers=headersDict),
-            # Connection("https://moodle.tau.ac.il/course/view.php?id=368215899", "GET", "goToMavnat", headers=headersDict),
-            # Connection("https://moodle.tau.ac.il/course/view.php?id=509174512", "GET", "goToMadar", headers=headersDict),
-            Connection("https://moodle.tau.ac.il/course/view.php?id=509174701", "GET", "goToHedva", headers=headersDict),
-            # Connection("https://moodle.tau.ac.il/course/view.php?id=509280199", "GET", "goToStat", headers=headersDict),
-            # Connection("https://moodle.tau.ac.il/course/view.php?id=512356101", "GET", "goToMalas", headers=headersDict)
-        ]
-        for connection in connectionList:
-            conversation.converse(connection)
-        sessKey: str = getSessKey("9goToMoodleSaml1")
-        hwConnectionList: list[Connection] = findAllHomework("10goToHedvaGET")
-        for connection in hwConnectionList:
-            conversation.converse(connection)
-        connectionList = [Connection(f"https://moodle.tau.ac.il/login/logout.php?sesskey={sessKey}", "GET", "logout")]
-        for connection in connectionList:
-            conversation.converse(connection)
+        # sendFormURL = "https://nidp.tau.ac.il/nidp/saml2/sso?sid=0&sid=0&uiDestination=contentDiv"
+        # credentials = getCredentialsFromFile(credentialsPath)
+        # moodleCredentials = f"option=credential&Ecom_User_ID={credentials[0]}&Ecom_User_Pid={credentials[1]}&" \
+        #                     f"Ecom_Password={credentials[2]}"
+        # headersDict = {"X-Requested-With": "XMLHttpRequest",
+        #                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
+        # connectionList = [Connection(sendFormURL, "POST", "sendForm", moodleCredentials, headersDict),
+        #                   Connection("https://nidp.tau.ac.il/nidp/saml2/sso?sid=0", "GET", "continueSendForm")]
+        # for connection in connectionList:
+        #     conversation.converse(connection)
+        # samlInfo = getSamlInfo(
+        #     f"{conversation.currIndex}continueSendForm")  # Go to last request and get the SAML info.
+        # headersDict = {"Content-Type": "application/x-www-form-urlencoded"}
+        # connectionList = [Connection("https://moodle.tau.ac.il/auth/saml2/sp/saml2-acs.php/moodle.tau.ac.il", "POST",
+        #                              "goToMoodleSaml", samlInfo, headersDict)]
+        # for connection in connectionList:
+        #     conversation.converse(connection)
+        # headersDict = {"Sec-Fetch-Site": "same-origin",
+        #                "Sec-Fetch-Mode": "navigate",
+        #                "Sec-Fetch-User": "?1",
+        #                "Sec-Fetch-Dest": "document",
+        #                "Referer": "https://moodle.tau.ac.il/my/",
+        #                "sec-ch-ua": '" Not A;Brand";v = "99", "Chromium";v = "98", "Google Chrome";v = "98"',
+        #                "sec-ch-ua-mobile": '?0',
+        #                "sec-ch-ua-platform": '"Windows"'}
+        # connectionList = [
+        #     # Connection("https://moodle.tau.ac.il/course/view.php?id=368215799", "GET", "goToTochna", headers=headersDict),
+        #     # Connection("https://moodle.tau.ac.il/course/view.php?id=368215899", "GET", "goToMavnat", headers=headersDict),
+        #     # Connection("https://moodle.tau.ac.il/course/view.php?id=509174512", "GET", "goToMadar", headers=headersDict),
+        #     Connection("https://moodle.tau.ac.il/course/view.php?id=509174701", "GET", "goToHedva", headers=headersDict),
+        #     # Connection("https://moodle.tau.ac.il/course/view.php?id=509280199", "GET", "goToStat", headers=headersDict),
+        #     # Connection("https://moodle.tau.ac.il/course/view.php?id=512356101", "GET", "goToMalas", headers=headersDict)
+        # ]
+        # for connection in connectionList:
+        #     conversation.converse(connection)
+        # sessKey: str = getSessKey("9goToMoodleSaml1")
+        # hwConnectionList: list[Connection] = findAllHomework("10goToHedvaGET")
+        # for connection in hwConnectionList:
+        #     conversation.converse(connection)
+        # connectionList = [Connection(f"https://moodle.tau.ac.il/login/logout.php?sesskey={sessKey}", "GET", "logout")]
+        # for connection in connectionList:
+        #     conversation.converse(connection)
 
 
 if __name__ == '__main__':
