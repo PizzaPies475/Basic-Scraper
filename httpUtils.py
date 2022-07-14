@@ -3,11 +3,7 @@ from re import match, findall, sub
 from typing import Union
 
 dayOfWeekList: [str] = ["Mon", "Tue", "Wed", "Thu", "Fri", 'Sat', 'Sun']
-validUrlRegex = r"((http(s)?:\/\/)?[\w-]+(\.[\w-]+)+(\/[\w\/?=&%+\.]+)*/?)"
-
-
-class WrongProtocolException(ValueError):
-    pass
+urlRegex = r"((http(s)?://)?[\w-]+(\.[\w-]+)+(/[\w/?=&%+.-]+)*/?)"
 
 
 class UrlPath:
@@ -15,9 +11,12 @@ class UrlPath:
     def __init__(self, pathStr: str):
         # if not match("^(\/([\w\.-]+))*\/?$", pathStr):  # "/" or "/path/to/file" or "/path/to/file/"
         #     raise ValueError(f"Invalid path: {pathStr}")
+        newPathStr: str = pathStr
         if pathStr.startswith("/"):
-            pathStr = pathStr[1:]
-        self.pathList: [str] = pathStr.split("/")
+            newPathStr: str = newPathStr[1:]
+        self.pathList: [str] = newPathStr.split("/")
+        if pathStr.endswith("/"):
+            self.pathList = self.pathList[:-1]
         pass
 
     def __str__(self):
@@ -30,7 +29,7 @@ class UrlPath:
 class URL:
     def __init__(self, urlStr: str):
         if not isValidURL(urlStr):
-            raise ValueError(f"Invalid URL: {urlStr}")
+            raise ValueError(f"Invalid URL- {urlStr}")
 
         self.urlStr: str = urlStr
         self.protocol: str = getProtocolFromUrl(urlStr)
@@ -47,7 +46,11 @@ class URL:
 
 def isValidURL(urlStr: str) -> bool:
     try:
-        return bool(match(r"^" + validUrlRegex + r"$", urlStr))
+        validationRegex = r"^" + urlRegex + r"$"
+        matchObject = match(validationRegex, urlStr)
+        if not matchObject:
+            pass
+        return bool(matchObject)
     except Exception as e:
         print(e)
         return False
@@ -171,20 +174,20 @@ class Cookie:
         return f"{self.name}={self.value}"
 
     def __repr__(self):
-        return f"{self.name}={self.value}"
+        return f"{self.name}={self.value[:30]}"
 
 
 class CookieJar:
     def __init__(self):
-        self.cookies: dict[str: dict] = dict()
+        self.tree: dict[str: dict] = dict()
         self.cookiesList: [Cookie] = list()
 
     def addCookie(self, cookie: Cookie):
         self.cookiesList.append(cookie)
         domain: str = cookie.domain
-        if domain not in self.cookies:
-            self.cookies[domain] = {"cookies": list()}
-        currDict: dict = self.cookies[domain]
+        if domain not in self.tree:
+            self.tree[domain] = {"cookies": list()}
+        currDict: dict = self.tree[domain]
         pathList: list[str] = cookie.getAttribute("path").pathList
         for path in pathList:
             if path in currDict:
@@ -198,10 +201,10 @@ class CookieJar:
     def addPath(self, url: URL) -> None:
         domain: str = url.domain
         pathList: list[str] = url.path.pathList
-        if domain not in self.cookies:
-            self.cookies[domain] = dict()
-            self.cookies[domain]["cookies"]: list[Cookie] = list()
-        currDict: dict = self.cookies[domain]
+        if domain not in self.tree:
+            self.tree[domain] = dict()
+            self.tree[domain]["cookies"]: list[Cookie] = list()
+        currDict: dict = self.tree[domain]
         for pathPart in pathList:
             if pathPart in currDict:
                 currDict = currDict[pathPart]
@@ -213,10 +216,16 @@ class CookieJar:
     def getCookies(self, url: URL) -> list[Cookie]:
         cookieList: list[Cookie] = list()
         domain = url.domain
-        if domain in self.cookies:
-            currDict: dict = self.cookies[url.domain]
+        if domain in self.tree:
+            currDict: dict = self.tree[url.domain]
             pathList: list[str] = url.path.pathList
             if currDict["cookies"]:
+                for cookie in currDict["cookies"]:
+                    if cookie.isExpired() or cookie.value.lower() == "deleted":
+                        self.cookiesList.remove(cookie)
+                        currDict["cookies"].remove(cookie)
+                    else:
+                        cookieList.append(cookie)
                 cookieList.extend(currDict["cookies"])
             for path in pathList:
                 if path in currDict:
@@ -231,7 +240,7 @@ class CookieJar:
         cookieList: list[Cookie] = self.getCookies(url)
         cookieStr: str = ""
         for cookie in cookieList:
-            if not cookie.isExpired() or cookie.value.lower() == "deleted":
+            if not cookie.isExpired():
                 cookieStr += f"{cookie};"
             else:
                 self.remove(cookie)
@@ -240,7 +249,7 @@ class CookieJar:
         return cookieStr
 
     def remove(self, cookie: Cookie) -> None:
-        currDict: dict = self.cookies[cookie.getAttribute("domain")]
+        currDict: dict = self.tree[cookie.getAttribute("domain")]
         pathList: list[str] = cookie.getAttribute("path").pathList
         for pathPart in pathList:
             if pathPart in currDict:
@@ -251,9 +260,9 @@ class CookieJar:
 
     def getTreePathString(self) -> str:
         treePathString: str = ""
-        for domain in self.cookies:
+        for domain in self.tree:
             treePathString += f"{domain}:\n"
-            currDict: dict = self.cookies[domain]
+            currDict: dict = self.tree[domain]
             for path in currDict:
                 if path == "cookies":
                     continue
@@ -264,8 +273,8 @@ class CookieJar:
         return treePathString
 
     def __contains__(self, url: URL) -> bool:
-        if url.domain in self.cookies:
-            currDict: dict = self.cookies[url.domain]
+        if url.domain in self.tree:
+            currDict: dict = self.tree[url.domain]
         else:
             return False
         path: UrlPath = url.path
@@ -277,7 +286,7 @@ class CookieJar:
         return True
 
     def __str__(self):
-        return str(self.cookies)
+        return str(self.tree)
 
 
 class Response:
@@ -307,7 +316,9 @@ def parseResponse(responseString: str, url: URL) -> Response:
     response.statusMessage = ' '.join(statusList[2:])
     for header in responseHeadersLines[1:]:
         headerName, headerValue = header.split(":", 1)
-        if "set-cookie" in headerName:
+        headerName = headerName.lower()
+        headerValue = headerValue.strip()
+        if headerName == "set-cookie":
             response.cookies.append(Cookie(headerValue, url.domain))
         response.headers[headerName] = headerValue
     response.body = ''.join(responseParts[1:])
@@ -384,15 +395,15 @@ class Request:
 
 class Connection(object):
     def __init__(self, url: Union[str, URL], requestType: str, name: str, content: str = "",
-                 headers: dict[str:str] = None, keepAlive: bool = True):
+                 headers: dict[str:str] = None):
         self.name: str = name
         if isinstance(url, str):
             self.url: URL = URL(url)
-        self.url: URL = url
+        else:
+            self.url: URL = url
         self.requestType: str = requestType
         self.content: str = content
         self.headers: dict[str, str] = headers
-        self.keepAlive: bool = keepAlive
         self.request: Request = None
         self.response: Response = None
 
@@ -414,7 +425,7 @@ def getLinksFromHTML(html: str) -> [URL]:
             content: str = f.read()
     else:
         content: str = html
-    URLs: [str] = findall(validUrlRegex, content)
+    URLs: [str] = findall(urlRegex, content)
     for i in range(len(URLs)):
         URLs[i] = URL(URLs[i][0])
     return URLs
@@ -423,7 +434,7 @@ def getLinksFromHTML(html: str) -> [URL]:
 def getUrlName(url: URL) -> str:
     name = f"{url.domain}_{'_'.join(url.path.pathList)}".replace("?", "_").strip(r"\:*?<>|")
     if len(name) > 100:
-        name = name[:100]
+        name = name[:60]
     return name
 
 

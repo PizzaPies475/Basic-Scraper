@@ -54,6 +54,8 @@ class HttpConversation:
                                               self.cookieJar.getCookiesStr(self.currConnection.url),
                                               connection.headers, acceptEnc=self.acceptEnc,
                                               options=self.options)
+        if self.log:
+            self.__logData(self.currConnection.request, f"{self.currIndex}{self.currConnection.name}_request.txt")
         self.connectionList.append(connection)
         print(f"Connecting to {connection.url}")
         retryCounter: int = 0
@@ -64,10 +66,11 @@ class HttpConversation:
                 break
             except IndexError as e:
                 retryCounter += 1
+        if self.log:
+            self.__logData(self.currConnection.response, f"{self.currIndex}{self.currConnection.name}_response.txt")
         self.__printStatusLine()
-        if ("Connection" in self.currConnection.response.headers or
-            "connection" in self.currConnection.response.headers) and \
-                self.currConnection.response.headers['Connection'].lower() == 'close':
+        if "connection" in self.currConnection.response.headers and \
+                self.currConnection.response.headers['connection'].lower() == 'close':
             self.keepAlive = False
         else:
             self.keepAlive = True
@@ -113,9 +116,6 @@ class HttpConversation:
 
     def __sendRecv(self) -> bytes:
         self.__changeHostIfNeeded()
-        if self.log:
-            self.__logData(str(self.currConnection.request),
-                           f"{self.currIndex}{self.currConnection.name}_request.txt")
         try:
             self.__clientSocket.send(str(self.currConnection.request).encode())
         except Exception as e:  # TODO add specific exception
@@ -152,7 +152,7 @@ class HttpConversation:
         with open(f"{self.logLocation}/{fileName}", 'w', encoding="ISO-8859-1") as f:
             if type(data) is bytes:
                 data = data.decode("ISO-8859-1")
-            else:
+            elif type(data) is not str:
                 try:
                     data = str(data)
                 except Exception as e:
