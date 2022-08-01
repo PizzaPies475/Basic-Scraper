@@ -2,22 +2,17 @@ from datetime import datetime, timedelta
 from re import match, findall, sub
 from typing import Union
 
-dayOfWeekList: [str] = ["Mon", "Tue", "Wed", "Thu", "Fri", 'Sat', 'Sun']
-urlRegex = r"((http(s)?://)?[\w-]+(\.[\w-]+)+(/[\w/?=&%+.-]+)*/?)"
+validUrlRegex = r"^(([a-zA-Z]+):\/\/)?([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?((\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%\.,+-]+)?)?([&|;]\w*(=[\w%\.,-]+)?)*)*)(#[:~=\w%?-]+)?$"
+toFindUrlRegex = r"((([a-zA-Z]+):\/\/)([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?(\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%+\.]+)?)?([&;]\w*(=[\w%\.,-]+)?)*)*(#[\w%]*)?)|(([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?(\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%+\.]+)?)?([&;]\w*(=[\w%\.,-]+)?)*)+(#[\w%]*)?)"
+validPathRegex = r"^(\/[\w%?&,\.=+;-]*)*$"
+validCookieRegex = r"^([\w~-]+)=([\w%-]+)((; [\w-]+(=[.\w, :\/-]+)?)*)$"
+findCookieAttributesRegex = r"(; ([\w-]+)(=([.\w, :\/-]+))?)"
 
 
 class UrlPath:
 
-    def __init__(self, pathStr: str):
-        # if not match("^(\/([\w\.-]+))*\/?$", pathStr):  # "/" or "/path/to/file" or "/path/to/file/"
-        #     raise ValueError(f"Invalid path: {pathStr}")
-        newPathStr: str = pathStr
-        if pathStr.startswith("/"):
-            newPathStr: str = newPathStr[1:]
-        self.pathList: [str] = newPathStr.split("/")
-        if pathStr.endswith("/"):
-            self.pathList = self.pathList[:-1]
-        pass
+    def __init__(self, pathList: [str]):
+        self.pathList: [str] = pathList
 
     def __str__(self):
         return f"/{'/'.join(self.pathList)}"
@@ -25,69 +20,72 @@ class UrlPath:
     def __len__(self):
         return len(self.pathList)
 
+    def __eq__(self, other):
+        return self.pathList == other.pathList
 
-class URL:
-    def __init__(self, urlStr: str):
-        if not isValidURL(urlStr):
-            raise ValueError(f"Invalid URL- {urlStr}")
+    def __hash__(self):
+        return hash(self.pathList)
 
-        self.urlStr: str = urlStr
-        self.protocol: str = getProtocolFromUrl(urlStr)
-        self.domain: str = getDomainFromUrl(urlStr)
-        self.path: UrlPath = getPathFromUrl(urlStr)
-        self.fragment: str = getFragmentFromUrl(urlStr)
-
-    def __str__(self):
-        return f"https://{self.domain}{self.path}"
-
-    def __repr__(self):
-        return f"https://{self.domain}{self.path}"
+    def __getitem__(self, index):
+        return self.pathList[index]
 
 
-def isValidURL(urlStr: str) -> bool:
-    try:
-        validationRegex = r"^" + urlRegex + r"$"
-        matchObject = match(validationRegex, urlStr)
-        if not matchObject:
-            pass
-        return bool(matchObject)
-    except Exception as e:
-        print(e)
-        return False
-
-
-def getProtocolFromUrl(urlStr: str) -> str:
-    if "://" in urlStr:
-        return urlStr.split("://")[0]
-    return ""
-
-
-def getDomainFromUrl(urlStr: str) -> str:
-    urlNoHttps: str = urlStr.removeprefix("https://")
-    urlNoHttps = urlNoHttps.removeprefix("http://")
-    if '/' in urlNoHttps:
-        return urlNoHttps.split("/")[0]
-    return urlNoHttps
-
-
-def getPathFromUrl(urlStr: str) -> UrlPath:
+def parsePath(urlStr: str) -> UrlPath:
     urlNoHttps: str = urlStr.removeprefix("https://")
     urlNoHttps = urlNoHttps.removeprefix("http://")
     if '/' in urlNoHttps:
         pathStr: str = f"/{'/'.join(urlNoHttps.split('/')[1:])}"
     else:
         pathStr: str = "/"
-    return UrlPath(pathStr)
+    if not match(validPathRegex, pathStr):
+        raise ValueError(f"Invalid path: {pathStr}")
+    newPathStr: str = pathStr
+    if pathStr.startswith("/"):
+        newPathStr: str = newPathStr[1:]
+    pathList: [str] = newPathStr.split("/")
+    if pathStr.endswith("/"):
+        pathList = pathList[:-1]
+    return UrlPath(pathList)
 
 
-def getFragmentFromUrl(urlStr: str) -> str:
-    if '#' in urlStr:
-        return urlStr.split('#')[1]
-    return ""
+class URL:
+
+    def __init__(self, urlStr: str):
+        urlMatch = match(validUrlRegex, urlStr)
+        if not urlMatch:
+            raise ValueError(f"Invalid URL- {urlStr}")
+        self.urlStr: str = urlStr
+        self.protocol: str = "" if urlMatch.group(2) is None else urlMatch.group(2)
+        self.domain: str = urlMatch.group(3)
+        self.port: str = "" if urlMatch.group(5) is None else urlMatch.group(5)
+        self.path: UrlPath = parsePath(urlMatch.group(7))
+        self.fragment: str = "" if urlMatch.group(14) is None else urlMatch.group(14)
+
+    def fullUrlStr(self) -> str:
+        return f"{self.getProtocolStr()}{self.domain}{self.getProtocolStr()}{self.path}{self.fragment}"
+
+    def getProtocolStr(self) -> str:
+        return f"{self.protocol}://" if self.protocol else ""
+
+    def getPortStr(self) -> str:
+        return f":{self.port}" if self.port else ""
+
+    def __str__(self):
+        return f"{self.getProtocolStr()}{self.domain}{self.path}"
+
+    def __repr__(self):
+        return f"{self.protocol}{self.domain}{self.path}"
+
+    def __eq__(self, other):
+        return self.domain == other.domain and self.port == other.port and \
+               self.path == other.path
+
+    def __hash__(self):
+        return hash(self.fullUrlStr())
 
 
 def getQueriesFromUrl(urlStr: str) -> [str]:
-    return findall(r"\?([^\s\/?]*)", urlStr)
+    return findall(r"\?([^\s/?]*)", urlStr)
 
 
 def checkUrlToPath(url: URL, path: [str]) -> bool:
@@ -101,61 +99,13 @@ def checkUrlToPath(url: URL, path: [str]) -> bool:
 
 
 class Cookie:
-    def __init__(self, cookieName: str, domain: str, cookieValue: str = None, cookieAttributes: dict[str: str] = None):
-        try:
-            if cookieValue is not None:
-                self.domain: str = domain
-                self.name: str = cookieName
-                self.value: str = cookieValue
-                self.attributes: dict[str: str] = cookieAttributes
-            else:
-                cookieList: [str] = cookieName.split()
-                self.domain: str = domain
-                self.name: str = cookieList[0].split('=')[0]
-                self.value: str = cookieList[0].split('=')[1].removesuffix(';')
-                self.attributes: dict[str: str] = dict()
-                i: int = 1
-                maxAgeFlag = False
-                while i in range(1, len(cookieList)):
-                    if "Max-Age" in cookieList[i] or "max-age" in cookieList[i]:
-                        day_name: str = dayOfWeekList[datetime.today().weekday()]
-                        maxAgeValue: int = int(cookieList[i][8:-1])
-                        maxAgeDays: int = maxAgeValue // (24 * 60 * 60)
-                        maxAgeHours: int = (maxAgeValue - maxAgeDays * (24 * 60 * 60)) // 360
-                        maxAgeMinutes: int = (maxAgeValue - maxAgeHours * 360 - maxAgeDays * (24 * 60 * 60)) // 60
-                        maxAgeSeconds: int = (maxAgeValue - maxAgeHours * 360 - maxAgeMinutes * 60) % 60
-                        maxAgeTime: str = f"{str(maxAgeHours).rjust(2, '0')}:{str(maxAgeMinutes).rjust(2, '0')}:" \
-                                          f"{str(maxAgeSeconds).rjust(2, '0')}"
-                        maxAgeToAdd: datetime = datetime.strptime(maxAgeTime, "%H:%M:%S")
-                        maxAgeDate: datetime = datetime.now() + timedelta(days=maxAgeDays, hours=maxAgeToAdd.hour,
-                                                                          minutes=maxAgeToAdd.minute,
-                                                                          seconds=maxAgeToAdd.second)
-                        self.attributes["expires"] = maxAgeDate.strftime(day_name + ", %d-%b-%Y %H:%M:%S GMT")
-                        i += 2
-                        maxAgeFlag: bool = True
-                    elif maxAgeFlag and "expires" in cookieList[i]:
-                        i += 4
-                    elif "expires" in cookieList[i] or "Expires" in cookieList[i]:
-                        self.attributes[
-                            'expires'] = f"{cookieList[i][8:]} {cookieList[i + 1]} {cookieList[i + 2]} " \
-                                         f"{cookieList[i + 3][:-1]} "
-                        i += 4
-                    elif '=' in cookieList[i]:
-                        self.attributes[cookieList[i].split('=')[0]] = cookieList[i].split('=')[1].removesuffix(';')
-                        i += 1
-                    else:
-                        self.attributes[cookieList[i].removesuffix(';')] = True
-                        i += 1
-                if "path" not in self.attributes and "Path" not in self.attributes:
-                    self.attributes["path"] = '/'
-                if "Path" in self.attributes:
-                    self.attributes["path"] = self.attributes["Path"]
-                    del self.attributes["Path"]
-                self.attributes["path"]: UrlPath = UrlPath(self.attributes["path"])
-
-        except Exception as e:
-            print("Failed to create cookie:", cookieName)
-            raise e
+    def __init__(self, cookieName: str, cookieValue: str, domain: str, cookieAttributes: dict[str] = None):
+        if cookieAttributes is None:
+            cookieAttributes: dict[str] = dict()
+        self.domain: str = domain
+        self.name: str = cookieName
+        self.value: str = cookieValue
+        self.attributes: dict[str] = cookieAttributes
 
     def getAttribute(self, attribute: str):
         if attribute in self.attributes:
@@ -166,9 +116,18 @@ class Cookie:
     # If the cookie doesn't have an 'expires' attribute, the function returns False (duh).
     def isExpired(self) -> bool:
         if self.getAttribute("expires"):
-            return datetime.strptime(self.getAttribute("expires")[5:].strip(), "%d-%b-%Y %H:%M:%S GMT") < datetime.now()
+            return datetime.strptime(self.getAttribute("expires"), "%a, %d-%b-%Y %H:%M:%S GMT") < datetime.now()
         else:
             return False
+
+    def fullCookieStr(self) -> str:
+        fullStr = f"{self.name}={self.value}"
+        for attribute in self.attributes:
+            if self.attributes[attribute] == True:
+                fullStr += f"; {attribute}"
+            else:
+                fullStr += f"; {attribute}={self.attributes[attribute]}"
+        return fullStr
 
     def __str__(self):
         return f"{self.name}={self.value}"
@@ -177,13 +136,44 @@ class Cookie:
         return f"{self.name}={self.value[:30]}"
 
 
+def parseCookie(cookieStr: str, domain: str) -> Cookie:
+    cookieMatchObject = match(validCookieRegex, cookieStr)
+    if not cookieMatchObject:
+        raise ValueError(f"Invalid cookie string: {cookieStr}")
+    cookieName: str = cookieMatchObject.group(1)
+    cookieValue: str = cookieMatchObject.group(2)
+    cookieAttributes: dict[str] = dict()
+    maxAgeFlag = False
+    for attribute in findall(findCookieAttributesRegex, cookieMatchObject.group(3)):
+        attributeName: str = attribute[1].lower()
+        attributeValue = attribute[3]
+        if attributeValue == "":
+            attributeValue = True
+        if attributeName == "max-age":
+            maxAgeFlag = True
+            maxAgeDate: datetime = datetime.now() + timedelta(seconds=int(attributeValue))
+            cookieAttributes["expires"] = maxAgeDate.strftime(
+                "%a, %d-%b-%Y %H:%M:%S GMT")  # TODO decide if this should be a datetime object and not text
+        elif attributeName == "expires" and not maxAgeFlag:
+            cookieAttributes["expires"] = attributeValue
+        elif attributeName == "path":
+            try:
+                cookieAttributes["path"] = parsePath(attributeValue)
+            except ValueError:
+                cookieAttributes["path"] = parsePath("/")
+        else:
+            cookieAttributes[attributeName] = attributeValue
+
+    if "path" not in cookieAttributes:
+        cookieAttributes["path"] = parsePath("/")
+    return Cookie(cookieName, cookieValue, domain, cookieAttributes)
+
+
 class CookieJar:
     def __init__(self):
-        self.tree: dict[str: dict] = dict()
-        self.cookiesList: [Cookie] = list()
+        self.tree: dict[str] = dict()
 
     def addCookie(self, cookie: Cookie):
-        self.cookiesList.append(cookie)
         domain: str = cookie.domain
         if domain not in self.tree:
             self.tree[domain] = {"cookies": list()}
@@ -196,7 +186,15 @@ class CookieJar:
                 currDict[path] = dict()
                 currDict = currDict[path]
                 currDict["cookies"]: list[Cookie] = []
-        currDict["cookies"].append(cookie)
+        toDeleteIndex: int = -1
+        for i, currCookie in enumerate(currDict["cookies"]):
+            if cookie.name == currCookie.name:
+                toDeleteIndex = i
+                break
+        if toDeleteIndex != -1:
+            del currDict["cookies"][toDeleteIndex]
+        if not cookie.isExpired() and cookie.value != "deleted":
+            currDict["cookies"].append(cookie)
 
     def addPath(self, url: URL) -> None:
         domain: str = url.domain
@@ -222,7 +220,6 @@ class CookieJar:
             if currDict["cookies"]:
                 for cookie in currDict["cookies"]:
                     if cookie.isExpired() or cookie.value.lower() == "deleted":
-                        self.cookiesList.remove(cookie)
                         currDict["cookies"].remove(cookie)
                     else:
                         cookieList.append(cookie)
@@ -297,7 +294,7 @@ class Response:
         self.statusCode: str = ""
         self.statusMessage: str = ""
         self.body: str = ""
-        self.headers: dict[str: str] = dict()
+        self.headers: dict[str, str] = dict()
         self.cookies: list[Cookie] = list()
 
     def __str__(self):
@@ -316,10 +313,10 @@ def parseResponse(responseString: str, url: URL) -> Response:
     response.statusMessage = ' '.join(statusList[2:])
     for header in responseHeadersLines[1:]:
         headerName, headerValue = header.split(":", 1)
-        headerName = headerName.lower()
         headerValue = headerValue.strip()
+        headerName = headerName.lower()
         if headerName == "set-cookie":
-            currentCookie: Cookie = Cookie(headerValue, url.domain)
+            currentCookie: Cookie = parseCookie(headerValue, url.domain)
             isFound: bool = False
             for i, cookie in enumerate(response.cookies):
                 if cookie.name == currentCookie.name and (cookie.value.lower() == "deleted" or cookie.isExpired()):
@@ -328,7 +325,6 @@ def parseResponse(responseString: str, url: URL) -> Response:
                     break
             if not isFound:
                 response.cookies.append(currentCookie)
-            response.cookies.append(currentCookie)
         response.headers[headerName] = headerValue
     response.body = ''.join(responseParts[1:])
     return response
@@ -336,7 +332,7 @@ def parseResponse(responseString: str, url: URL) -> Response:
 
 class Request:
     def __init__(self, requestType: str, requestURL: URL, content: str = None, cookiesStr: str = "",
-                 moreHeaders: dict[str: str] = None, keepAlive: bool = True, acceptEnc: str = "utf-8",
+                 moreHeaders: dict[str, str] = None, keepAlive: bool = True, acceptEnc: str = "utf-8",
                  referer: str = "",
                  options: bool = False):
         self.properties = {
@@ -404,7 +400,7 @@ class Request:
 
 class Connection(object):
     def __init__(self, url: Union[str, URL], requestType: str, name: str, content: str = "",
-                 headers: dict[str:str] = None):
+                 headers: dict[str, str] = None):
         self.name: str = name
         if isinstance(url, str):
             self.url: URL = URL(url)
@@ -423,20 +419,24 @@ class Connection(object):
 # Returns the current time using the HTTP time format
 #   (as explained in: https://httpwg.org/specs/rfc7231.html#http.date).
 def getCurrHttpTime() -> str:
-    day_name = dayOfWeekList[datetime.today().weekday()]
-    return datetime.now().strftime(day_name + ", %d-%b-%Y %H:%M:%S GMT")
+    return datetime.now().strftime("%a, %d-%b-%Y %H:%M:%S GMT")
 
 
-def getLinksFromHTML(html: str) -> [URL]:
+def getLinksFromHTML(html: str, toFindRegex: str = toFindUrlRegex) -> [URL]:
     if html.startswith("file://"):
         htmlStrip = html.removeprefix("file://")
         with open(htmlStrip, 'r', encoding='ISO-8859-1') as f:
             content: str = f.read()
     else:
         content: str = html
-    URLs: [str] = findall(urlRegex, content)
-    for i in range(len(URLs)):
-        URLs[i] = URL(URLs[i][0])
+    toTryURLs: [str] = findall(r"(" + toFindRegex + r")", content)
+    URLs: list[URL] = []
+    for tryUrl in toTryURLs:
+        try:
+            URLs.append(URL(tryUrl[0]))
+        except Exception as e:
+            print(e)  # TODO figure out how to handle this
+            pass
     return URLs
 
 

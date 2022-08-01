@@ -1,0 +1,8 @@
+ADRUM_BT=deleted; expires=Thu, 01-Jan-1970 00:00:01 GMT; Max-Age=0; path=/
+ADRUM_BT=R%3A0%7Cg%3A7e8ad217-7a6e-4b1e-b8bf-e96c8011438e41937%7Cn%3Auni-ta-prod_18cc119c-64b2-4a3f-8624-1a7a325f6c64%7Ci%3A1008156%7Ce%3A44; expires=Thu, 28-Jul-2022 12:54:53 GMT; Max-Age=30; path=/; secure
+TS0100a65f=0181aaedfd6eae20700a1abd9aed82a7e721fddc3473b638fa2404eadb7b261708f557a22c1adc085ef6d6734e988999dfe7e0c832; Path=/; Domain=.moodle.tau.ac.il
+BIGipServer~elearning-services~moodle-prod-443=rd3o00000000000000000000ffff84420c43o443; path=/; Httponly; Secure
+MoodleSessionMoodle2021=73db9245b025b60e541e506a350fc29b; path=/; secure; HttpOnly; SameSite=None
+TS01efaafa=0181aaedfdad20f73dcbe205685c7b3eb74ae2e8925f0c6e92011b5d74ba754a58867c87960374d3e659393dc44e4006816595ea6d94ab0ec4e9101da4257854f262633778cc4d66ef6bd2aa780abc7f1ddc16fa92ec2ea68d794e2400d32b2977eedff112a787222fe6c82a06e961a4966acee2ea; Path=/; Domain=.www.ims.tau.ac.il
+pu_referral=unknown; expires=Fri, 29-Jul-2022 19:02:29 GMT; Max-Age=86400
+75a2998d66f2069c7e83b5e848ea2b31=4234c2d0021ca280422b323f7ad74c12; path=dudyl
