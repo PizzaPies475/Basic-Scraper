@@ -2,10 +2,10 @@ from datetime import datetime, timedelta
 from re import match, findall, sub
 from typing import Union
 
-validUrlRegex = r"^(([a-zA-Z]+):\/\/)?([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?((\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%\.,+-]+)?)?([&|;]\w*(=[\w%\.,-]+)?)*)*)(#[:~=\w%?-]+)?$"
+validUrlRegex = r"^^(([a-zA-Z]+):\/\/)?([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?((\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%\.,+-]+)?)?([&|;]\w*(=[\w%\.,-]+)?)*)*)(#([:~=\w%?-]+))?$"
 toFindUrlRegex = r"((([a-zA-Z]+):\/\/)([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?(\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%+\.]+)?)?([&;]\w*(=[\w%\.,-]+)?)*)*(#[\w%]*)?)|(([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?(\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%+\.]+)?)?([&;]\w*(=[\w%\.,-]+)?)*)+(#[\w%]*)?)"
 validPathRegex = r"^(\/[\w%?&,\.=+;-]*)*$"
-validCookieRegex = r"^([\w~-]+)=([\w%-]+)((; [\w-]+(=[.\w, :\/-]+)?)*)$"
+validCookieRegex = r"^([\\\w~-]+)=([\\\w%-]+)((; [\\\w-]+(=[.\\\w, :\\\/?-]+)?)*)$"
 findCookieAttributesRegex = r"(; ([\w-]+)(=([.\w, :\/-]+))?)"
 
 
@@ -14,8 +14,14 @@ class UrlPath:
     def __init__(self, pathList: [str]):
         self.pathList: [str] = pathList
 
+    def __bool__(self):
+        return bool(self.pathList)
+
     def __str__(self):
         return f"/{'/'.join(self.pathList)}"
+
+    def __repr__(self):
+        return str(self)
 
     def __len__(self):
         return len(self.pathList)
@@ -55,26 +61,29 @@ class URL:
         if not urlMatch:
             raise ValueError(f"Invalid URL- {urlStr}")
         self.urlStr: str = urlStr
-        self.protocol: str = "" if urlMatch.group(2) is None else urlMatch.group(2)
+        self.scheme: str = "" if urlMatch.group(2) is None else urlMatch.group(2)
         self.domain: str = urlMatch.group(3)
-        self.port: str = "" if urlMatch.group(5) is None else urlMatch.group(5)
+        self.port: str = "" if urlMatch.group(6) is None else urlMatch.group(6)
         self.path: UrlPath = parsePath(urlMatch.group(7))
-        self.fragment: str = "" if urlMatch.group(14) is None else urlMatch.group(14)
+        self.fragment: str = "" if urlMatch.group(15) is None else urlMatch.group(15)
 
     def fullUrlStr(self) -> str:
-        return f"{self.getProtocolStr()}{self.domain}{self.getProtocolStr()}{self.path}{self.fragment}"
+        return f"{self.getSchemeStr()}{self.domain}{self.getPortStr()}{self.path}{self.getFragmentStr()}"
 
-    def getProtocolStr(self) -> str:
-        return f"{self.protocol}://" if self.protocol else ""
+    def getSchemeStr(self) -> str:
+        return f"{self.scheme}://" if self.scheme else ""
 
     def getPortStr(self) -> str:
         return f":{self.port}" if self.port else ""
 
+    def getFragmentStr(self) -> str:
+        return f"#{self.fragment}" if self.fragment else ""
+
     def __str__(self):
-        return f"{self.getProtocolStr()}{self.domain}{self.path}"
+        return f"{self.getSchemeStr()}{self.domain}{self.path}"
 
     def __repr__(self):
-        return f"{self.protocol}{self.domain}{self.path}"
+        return f"{self.scheme}{self.domain}{self.path}"
 
     def __eq__(self, other):
         return self.domain == other.domain and self.port == other.port and \
@@ -84,18 +93,8 @@ class URL:
         return hash(self.fullUrlStr())
 
 
-def getQueriesFromUrl(urlStr: str) -> [str]:
+def getQueriesFromUrl(urlStr: str) -> [str]:  # TODO not tested!
     return findall(r"\?([^\s/?]*)", urlStr)
-
-
-def checkUrlToPath(url: URL, path: [str]) -> bool:
-    urlPath = url.path.pathList
-    if len(urlPath) > len(path):
-        for i in range(len(path)):
-            if urlPath[i] != path[i]:
-                return False
-        return True
-    return False
 
 
 class Cookie:
@@ -169,68 +168,90 @@ def parseCookie(cookieStr: str, domain: str) -> Cookie:
     return Cookie(cookieName, cookieValue, domain, cookieAttributes)
 
 
+class CookieJarNode:
+    def __init__(self, name: str):
+        self.name: str = name
+        self.cookies: [Cookie] = []
+        self.children: dict[str, CookieJarNode] = dict()
+        self.parent: Union[CookieJarNode, None] = None
+        self.isVisited: bool = False
+
+    def addCookie(self, newCookie: Cookie) -> None:
+        for cookie in self.cookies:
+            if cookie.name == newCookie.name:
+                self.cookies.remove(cookie)
+        self.cookies.append(newCookie)
+
+    def addChild(self, childName: str):
+        child = CookieJarNode(childName)
+        self.children[child.name] = child
+        child.parent = self
+        return child
+
+    def __repr__(self):
+        return f"{self.name}"
+
+
 class CookieJar:
     def __init__(self):
-        self.tree: dict[str] = dict()
+        self.root: CookieJarNode = CookieJarNode("root")
 
-    def addCookie(self, cookie: Cookie):
-        domain: str = cookie.domain
-        if domain not in self.tree:
-            self.tree[domain] = {"cookies": list()}
-        currDict: dict = self.tree[domain]
-        pathList: list[str] = cookie.getAttribute("path").pathList
-        for path in pathList:
-            if path in currDict:
-                currDict = currDict[path]
+    def __traverse(self, domain: str, path: UrlPath, create: bool) -> Union[CookieJarNode, None]:
+        currentNode: CookieJarNode = self.root
+        if domain in currentNode.children:
+            currentNode = currentNode.children[domain]
+        else:
+            if create:
+                currentNode = currentNode.addChild(domain)
             else:
-                currDict[path] = dict()
-                currDict = currDict[path]
-                currDict["cookies"]: list[Cookie] = []
-        toDeleteIndex: int = -1
-        for i, currCookie in enumerate(currDict["cookies"]):
-            if cookie.name == currCookie.name:
-                toDeleteIndex = i
-                break
-        if toDeleteIndex != -1:
-            del currDict["cookies"][toDeleteIndex]
-        if not cookie.isExpired() and cookie.value != "deleted":
-            currDict["cookies"].append(cookie)
+                return None
+        for nodeName in path.pathList:
+            if nodeName not in currentNode.children:
+                if create:
+                    currentNode = currentNode.addChild(nodeName)
+                else:
+                    return None
+            else:
+                currentNode = currentNode.children[nodeName]
+        return currentNode
 
-    def addPath(self, url: URL) -> None:
-        domain: str = url.domain
-        pathList: list[str] = url.path.pathList
-        if domain not in self.tree:
-            self.tree[domain] = dict()
-            self.tree[domain]["cookies"]: list[Cookie] = list()
-        currDict: dict = self.tree[domain]
-        for pathPart in pathList:
-            if pathPart in currDict:
-                currDict = currDict[pathPart]
-            else:
-                currDict[pathPart] = dict()
-                currDict = currDict[pathPart]
-                currDict["cookies"]: list[Cookie] = []
+    def addRemoveCookie(self, cookie: Cookie) -> None:
+        if cookie.value == "deleted" or cookie.isExpired():
+            self.remove(cookie)
+        else:
+            self.__traverse(cookie.domain, UrlPath(cookie.getAttribute("path")), create=True).addCookie(cookie)
+
+    def remove(self, toBeRemovedCookie: Cookie) -> None:
+        node: CookieJarNode = self.__traverse(toBeRemovedCookie.domain, UrlPath(toBeRemovedCookie.getAttribute("path")),
+                                              create=False)
+        if node is not None:
+            for cookie in node.cookies:
+                if cookie.name == toBeRemovedCookie.name:
+                    node.cookies.remove(cookie)
+                    return
+        raise TimeoutError(f"New cookie <{toBeRemovedCookie}> is expired or deleted")
+
+    def visit(self, url: URL) -> None:
+        self.__traverse(url.domain, UrlPath(url.path), create=True).isVisited = True
+
+    def isVisited(self, url: URL) -> bool:
+        node: CookieJarNode = self.__traverse(url.domain, UrlPath(url.path), create=False)
+        if node is None:
+            return False
+        return node.isVisited
 
     def getCookies(self, url: URL) -> list[Cookie]:
         cookieList: list[Cookie] = list()
-        domain = url.domain
-        if domain in self.tree:
-            currDict: dict = self.tree[url.domain]
-            pathList: list[str] = url.path.pathList
-            if currDict["cookies"]:
-                for cookie in currDict["cookies"]:
-                    if cookie.isExpired() or cookie.value.lower() == "deleted":
-                        currDict["cookies"].remove(cookie)
-                    else:
-                        cookieList.append(cookie)
-                cookieList.extend(currDict["cookies"])
-            for path in pathList:
-                if path in currDict:
-                    currDict = currDict[path]
-                if currDict["cookies"]:
-                    cookieList.extend(currDict["cookies"])
-                else:
-                    return cookieList
+        currNode: CookieJarNode = self.root
+        if url.domain in currNode.children:
+            currNode = currNode.children[url.domain]
+            cookieList.extend(currNode.cookies)
+        else:
+            return cookieList
+        for nodeName in url.path.pathList:
+            if nodeName in currNode.children:
+                currNode = currNode.children[nodeName]
+                cookieList.extend(currNode.cookies)
         return cookieList
 
     def getCookiesStr(self, url: URL) -> str:
@@ -238,64 +259,47 @@ class CookieJar:
         cookieStr: str = ""
         for cookie in cookieList:
             if not cookie.isExpired():
-                cookieStr += f"{cookie};"
+                cookieStr += f"{cookie}; "
             else:
                 self.remove(cookie)
+        cookieStr = cookieStr.strip()
         if cookieStr.endswith(";"):
             cookieStr = cookieStr[:-1]
         return cookieStr
 
-    def remove(self, cookie: Cookie) -> None:
-        currDict: dict = self.tree[cookie.getAttribute("domain")]
-        pathList: list[str] = cookie.getAttribute("path").pathList
-        for pathPart in pathList:
-            if pathPart in currDict:
-                currDict = currDict[pathPart]
-            else:
-                raise ValueError("Cookie not found")
-        currDict["cookies"].remove(cookie)
-
-    def getTreePathString(self) -> str:
-        treePathString: str = ""
-        for domain in self.tree:
-            treePathString += f"{domain}:\n"
-            currDict: dict = self.tree[domain]
-            for path in currDict:
-                if path == "cookies":
-                    continue
-                treePathString += f"\t{path}:\n"
-                currDict = currDict[path]
-                for cookie in currDict["cookies"]:
-                    treePathString += f"\t\t{cookie}\n"
-        return treePathString
-
-    def __contains__(self, url: URL) -> bool:
-        if url.domain in self.tree:
-            currDict: dict = self.tree[url.domain]
-        else:
-            return False
-        path: UrlPath = url.path
-        for pathPart in path.pathList:
-            if pathPart in currDict:
-                currDict = currDict[pathPart]
-            else:
-                return False
-        return True
-
     def __str__(self):
-        return str(self.tree)
+        pass
+
+    def __contains__(self, item: Union[URL, Cookie]) -> bool:
+        if isinstance(item, Cookie):
+            url: URL = URL(f"{item.domain}{item.getAttribute('path')}")
+        else:
+            url: URL = item
+        currNode: CookieJarNode = self.__traverse(url.domain, UrlPath(url.path), create=False)
+        if isinstance(item, Cookie):
+            return item in currNode.cookies
+        else:
+            return currNode is not None
 
 
 class Response:
     def __init__(self, url: URL):
         self.url: URL = url
-        self.responseString = ""
+        self.responseString: str = ""
         self.httpVersion: str = ""
         self.statusCode: str = ""
         self.statusMessage: str = ""
         self.body: str = ""
         self.headers: dict[str, str] = dict()
         self.cookies: list[Cookie] = list()
+
+    def rebuildResponse(self) -> str:
+        responseString: str = f"{self.httpVersion} {self.statusCode} {self.statusMessage}\r\n"
+        for headerName in self.headers:
+            responseString += f"{headerName}: {self.headers[headerName]}\r\n"
+        responseString += "\r\n"
+        responseString += self.body
+        return responseString
 
     def __str__(self):
         return f"{self.responseString}"
@@ -317,13 +321,13 @@ def parseResponse(responseString: str, url: URL) -> Response:
         headerName = headerName.lower()
         if headerName == "set-cookie":
             currentCookie: Cookie = parseCookie(headerValue, url.domain)
-            isFound: bool = False
+            isAlreadyInList: bool = False
             for i, cookie in enumerate(response.cookies):
                 if cookie.name == currentCookie.name and (cookie.value.lower() == "deleted" or cookie.isExpired()):
                     response.cookies[i] = currentCookie
-                    isFound = True
+                    isAlreadyInList = True
                     break
-            if not isFound:
+            if not isAlreadyInList:
                 response.cookies.append(currentCookie)
         response.headers[headerName] = headerValue
     response.body = ''.join(responseParts[1:])

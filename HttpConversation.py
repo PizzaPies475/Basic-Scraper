@@ -75,7 +75,7 @@ class HttpConversation:
         else:
             self.keepAlive = True
         for cookie in self.currConnection.response.cookies:
-            self.cookieJar.addCookie(cookie)
+            self.cookieJar.addRemoveCookie(cookie)
         if "location" in self.currConnection.response.headers:
             if self.maxReferrals > 0:
                 self.maxReferrals -= 1
@@ -99,7 +99,7 @@ class HttpConversation:
             except gaierror:
                 raise ValueError(f"Could not resolve host: {urlHost}")
             clientSocket: socket = socket(AF_INET, SOCK_STREAM)
-            if self.currConnection.url.protocol == "https" or self.isSecure:
+            if self.currConnection.url.scheme == "https" or self.isSecure:
                 self.__clientSocket: SSLSocket = create_default_context().wrap_socket(clientSocket,
                                                                                       server_hostname=urlHost)
                 clientSocket.close()
@@ -192,10 +192,10 @@ class HttpConversation:
             for url in urlList:
                 if len(connectionQueue) + len(self.connectionList) > mapSize:
                     break
-                if url.domain == domain and (url.protocol == "https" or url.protocol == "") and \
+                if url.domain == domain and (url.scheme == "https" or url.scheme == "") and \
                         url not in self.cookieJar and not isFileUrl(url):
                     connectionQueue.append(Connection(url, 'GET', getUrlName(url)))
-                    self.cookieJar.addPath(url)
+                    self.cookieJar.visit(url)
             for connection in connectionQueue:
                 self.mapDomain(connection.url, mapSize - 1)
         if mapSize == 0:
