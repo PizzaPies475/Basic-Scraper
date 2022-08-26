@@ -70,9 +70,11 @@ def main():
         startURL = "https://moodle.tau.ac.il/"
         clickLoginURL = "https://moodle.tau.ac.il/login/index.php"
         # continueLoginURL = "https://nidp.tau.ac.il/nidp/saml2/sso?id=10&sid=0&option=credential&sid=0"
-        connectionList = [Connection(startURL, "GET", "goToMoodle"),
-                          Connection(clickLoginURL, "GET", "clickLogin"),]
+        conversation.sendOptionalHeaders = True
+        connectionList = [Connection(startURL, "GET", "goToMoodle", isUserActivation=True, headers={"Accept-Encoding": "gzip, deflate, br"}),
+                          Connection(clickLoginURL, "GET", "clickLogin", isUserActivation=True, ), ]
                           # Connection(continueLoginURL, "POST", "continueClickLogin")]
+        conversation.sendOptionalHeaders = False
         for connection in connectionList:
             conversation.converse(connection)
         # sendFormURL = "https://nidp.tau.ac.il/nidp/saml2/sso?sid=0&sid=0&uiDestination=contentDiv"

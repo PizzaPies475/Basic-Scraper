@@ -1,11 +1,14 @@
 from datetime import datetime, timedelta
 from re import match, findall, sub
 from typing import Union
+from gzip import decompress as gzipDecompress
+from zlib import decompress as zlibDecompress
+from brotli import decompress as brotliDecompress
 
 validUrlRegex = r"^^(([a-zA-Z]+):\/\/)?([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?((\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%\.,+-]+)?)?([&|;]\w*(=[\w%\.,-]+)?)*)*)(#([:~=\w%?-]+))?$"
 toFindUrlRegex = r"((([a-zA-Z]+):\/\/)([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?(\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%+\.]+)?)?([&;]\w*(=[\w%\.,-]+)?)*)*(#[\w%]*)?)|(([a-zA-Z0-9_%-]+(\.[a-zA-Z0-9_%-]+)+)(:(\d+))?(\/[\w%,-]*(\.\w+)*(\?\w+(=[\w%+\.]+)?)?([&;]\w*(=[\w%\.,-]+)?)*)+(#[\w%]*)?)"
 validPathRegex = r"^(\/[\w%?&,\.=+;-]*)*$"
-validCookieRegex = r"^([\\\w~-]+)=([\\\w%-]+)((; [\\\w-]+(=[.\\\w, :\\\/?-]+)?)*)$"
+validCookieRegex = r"^([\\\w~-]+)=([\\\w%-=]+)((; [\\\w-]+(=[.\\\w, :\\\/?-]+)?)*)$"
 findCookieAttributesRegex = r"(; ([\w-]+)(=([.\w, :\/-]+))?)"
 
 
@@ -93,7 +96,7 @@ class URL:
         return hash(self.fullUrlStr())
 
 
-def getQueriesFromUrl(urlStr: str) -> [str]:  # TODO not tested!
+def getQueriesFromUrl(urlStr: str) -> [str]:
     return findall(r"\?([^\s/?]*)", urlStr)
 
 
@@ -302,15 +305,19 @@ class Response:
         return responseString
 
     def __str__(self):
-        return f"{self.responseString}"
+        return f"{self.responseString}\r\n{self.body}"
 
 
-def parseResponse(responseString: str, url: URL) -> Response:
+def parseResponse(responseBytes: bytes, url: URL) -> Response:
+    if not (responseBytes.startswith(b"HTTP/") and b"\r\n\r\n" in responseBytes):
+        raise ValueError("Invalid response string")
+    responseParts: list[bytes] = responseBytes.split(b"\r\n\r\n", 1)
+    responseString: str = responseParts[0].decode("utf-8")
+    contentBytes: bytes = responseParts[1]
     response: Response = Response(url)
-    responseString = sub(r"[\da-fA-F]{3,8}(\r\n|\n)", "", responseString)
-    responseParts = responseString.split("\r\n\r\n")
+    # TODO responseString = sub(r"[\da-fA-F]{3,8}(\r\n|\n)", "", responseString)
     response.responseString = responseString
-    responseHeadersLines: list[str] = responseParts[0].split("\r\n")
+    responseHeadersLines: list[str] = responseString.split("\r\n")
     statusList = responseHeadersLines[0].split(" ")
     response.httpVersion = statusList[0]
     response.statusCode = statusList[1]
@@ -330,81 +337,122 @@ def parseResponse(responseString: str, url: URL) -> Response:
             if not isAlreadyInList:
                 response.cookies.append(currentCookie)
         response.headers[headerName] = headerValue
-    response.body = ''.join(responseParts[1:])
+    content = contentBytes
+    if "content-encoding" in response.headers:
+        encodingsList: list[str] = response.headers["content-encoding"].split(",")
+        for encoding in encodingsList:
+            encoding = encoding.strip().lower()
+            if encoding == "gzip":
+                content = gzipDecompress(contentBytes)
+            elif encoding == "deflate":
+                content = zlibDecompress(contentBytes)
+            elif encoding == "br":
+                content = brotliDecompress(contentBytes)
+            else:
+                raise ValueError(f"Unsupported encoding <{encoding}>")
+    content = sub(r"[\da-fA-F]{3,8}(\r\n|\n)", "", content.decode("ISO-8859-1"))
+    response.body = content
     return response
 
 
 class Request:
-    def __init__(self, requestType: str, requestURL: URL, content: str = None, cookiesStr: str = "",
+    # optionalHeaders: dict[str, str] = {}
+
+    def __init__(self, requestType: str, requestURL: URL, isUserAction: bool, content: str = "", cookiesStr: str = "",
                  moreHeaders: dict[str, str] = None, keepAlive: bool = True, acceptEnc: str = "utf-8",
-                 referer: str = "",
-                 options: bool = False):
-        self.properties = {
-            "requestType": requestType,
-            "requestURL": requestURL,
-            "content": content,
-            "cookiesStr": cookiesStr,
-            "moreHeaders": moreHeaders,
-            "keepAlive": keepAlive,
+                 referer: str = "", shouldOptionalHeaders: bool = False):
+        self.type: str = requestType
+        self.url: URL = requestURL
+        self.content: str = content
+        self.headers = {
+            "Host": requestURL.domain,
+            "Connection": "keep-alive" if keepAlive else "close",
+            "Pragma": "no-cache",
+            "Cache-Control": "no-cache",
+            "Upgrade-Insecure-Requests": "1",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Ch-Ua": '"Chromium";v="104", " Not A;Brand";v="99", "Google Chrome";v="104"',
             "Accept-Encoding": acceptEnc,
-            "Referer": referer,
-            "options": options
+            "Accept-Language": "en-GB,en;q=0.9",
         }
+        # if shouldOptionalHeaders:
+        #     self.headers.update(self.optionalHeaders)
+        if cookiesStr != "":
+            self.headers["Cookie"] = cookiesStr
+        if self.content != "" or self.type == "POST":
+            self.headers["Content-Length"] = str(len(self.content))
+        if referer != "":
+            self.headers["Referer"] = referer
+        if isUserAction:
+            self.headers["Sec-Fetch-User"] = "?1"
+        if moreHeaders is not None:
+            self.headers.update(moreHeaders)
 
     def __str__(self):
-        requestStr: str = f"{self.properties['requestType']} {self.properties['requestURL']} HTTP/1.1\r\n"
-        requestStr += f"Host: {self.properties['requestURL'].domain}\r\n"
-        requestStr += f"Connection: {'keep-alive' if self.properties['keepAlive'] else 'close'}\r\n"
-        if self.properties['Referer'] != "" and self.properties['Referer'] is not None:
-            requestStr += f"Referer: {self.properties['referer']}\r\n"
-        requestStr += "Pragma: no-cache\r\n" \
-                      "Cache-Control: no-cache\r\n" \
-                      "Upgrade-Insecure-Requests: 1\r\n"
-        if self.properties['cookiesStr'] != "":
-            requestStr += f"Cookie: {self.properties['cookiesStr']}\r\n"
-        if self.properties['content'] is not None and self.properties['content'] != '':
-            requestStr += f"Content-Length: {len(self.properties['content'])}\r\n"
-        if self.properties['requestType'] == "POST" and (
-                self.properties['content'] == '' or self.properties['content'] is None):
-            requestStr += "Content-Length: 0\r\n"
-        if self.properties['moreHeaders'] is not None:
-            for header in self.properties['moreHeaders']:
-                requestStr += f"{header}: {self.properties['moreHeaders'][header]}\r\n"
-        requestStr += "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " \
-                      "Chrome/101.0.4951.54 Safari/537.36\r\n" \
-                      "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng" \
-                      ",*/*;q=0.8,application/signed-exchange;v=b3;q=0.9\r\n"
-        if self.properties['Accept-Encoding'] is not None and self.properties['Accept-Encoding'] != "":
-            requestStr += f"Accept-Encoding: {self.properties['Accept-Encoding']}\r\n"
-        if self.properties['options']:
-            requestStr += 'sec-ch-ua: " Not A;Brand";v="99", "Chromium";v="101", "Google Chrome";v="101"\r\n' \
-                          'sec-ch-ua-mobile: ?0\r\n' \
-                          'sec-ch-ua-platform: "Windows"\r\n' \
-                          'sec-fetch-dest: document\r\n' \
-                          'sec-fetch-mode: navigate\r\n' \
-                          'sec-fetch-site: none\r\n' \
-                          'sec-fetch-user: ?1\r\n' \
-                          'sec-fetch-user: ?1\r\n'
-        requestStr += "Accept-Language: en-GB,en;q=0.9\r\n" \
-                      "\r\n"
-
-        if self.properties["content"] is not None:
-            requestStr += self.properties["content"]
+        requestStr: str = f"{self.type} {self.url} HTTP/1.1\r\n"
+        for header in self.headers:
+            requestStr += f"{header}: {self.headers[header]}\r\n"
+        if self.content is not None:
+            requestStr += self.content
+        requestStr += "\r\n"
         return requestStr
 
-    def __setitem__(self, key, value):
-        if key in self.properties:
-            self.properties[key] = value
+    def __setitem__(self, key: str, value):
+        lowerKey = key.lower()
+        if lowerKey == "content":
+            self.content = value
+            if value != "" or self.type == "POST":
+                self.headers["Content-Length"] = str(len(value))
+        elif lowerKey == "requestType":
+            self.type = value
+        elif lowerKey == "requestURL":
+            self.url = value
+            self.headers["Host"] = value.domain
         else:
-            raise KeyError(f"{key} is not a valid key")
+            if lowerKey in self.headers:
+                self.headers[lowerKey] = value
+            else:
+                self.headers[key] = value
 
     def __getitem__(self, item):
-        return self.properties[item]
+        item = item.lower()
+        if item == "content":
+            return self.content
+        elif item == "requestType":
+            return self.type
+        elif item == "requestURL":
+            return self.url
+        elif item in self.headers:
+            return self.headers[item]
+        else:
+            raise KeyError("Key not found")
 
 
-class Connection(object):
+def parseRequest(requestString: str) -> Request:
+    newLine = "\r\n" if '\r' in requestString else '\n'
+    requestType: str = requestString.split(" ")[0]
+    requestURL: URL = URL(requestString.split(" ")[1])
+    requestHeadersLines: list[str] = requestString.split(f"{newLine}{newLine}")[0].split(newLine)[1:]
+    request: Request = Request(requestType, requestURL, False)
+    for header in requestHeadersLines:
+        headerName, headerValue = header.split(":", 1)
+        headerValue = headerValue.strip()
+        headerName = headerName.strip()
+        request[headerName] = headerValue
+    if len(requestString.split(f"{newLine}{newLine}")) > 1:
+        request.content = requestString.split(f"{newLine}{newLine}")[1]
+    return request
+
+
+class Connection:
     def __init__(self, url: Union[str, URL], requestType: str, name: str, content: str = "",
-                 headers: dict[str, str] = None):
+                 headers: dict[str, str] = None, isUserActivation: bool = False):
         self.name: str = name
         if isinstance(url, str):
             self.url: URL = URL(url)
@@ -415,6 +463,7 @@ class Connection(object):
         self.headers: dict[str, str] = headers
         self.request: Request = None
         self.response: Response = None
+        self.isUserAction: bool = isUserActivation
 
     def __str__(self):
         return f"{self.name}"
@@ -429,7 +478,7 @@ def getCurrHttpTime() -> str:
 def getLinksFromHTML(html: str, toFindRegex: str = toFindUrlRegex) -> [URL]:
     if html.startswith("file://"):
         htmlStrip = html.removeprefix("file://")
-        with open(htmlStrip, 'r', encoding='ISO-8859-1') as f:
+        with open(htmlStrip, 'r', encoding="ISO-8859-1") as f:
             content: str = f.read()
     else:
         content: str = html

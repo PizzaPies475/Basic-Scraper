@@ -99,3 +99,41 @@ def test_visit():
 
 def test_getCookies():
     assert True
+
+
+def test_request():
+
+    def assertions(requestToTest: httpUtils.Request,  requestToCompare: httpUtils.Request = None):
+        if requestToCompare is not None:
+            assert requestToTest.type == requestToCompare.type
+            assert requestToTest.url == requestToCompare.url
+            assert requestToTest.headers == requestToCompare.headers
+            assert requestToTest.content == requestToCompare.content
+        assert requestToTest.type == "GET"
+        assert requestToTest.url == httpUtils.URL("https://moodle.tau.ac.il/")
+        assert requestToTest.content == "requestContentTest"
+        assert requestToTest.headers["Accept"] == "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"
+        assert requestToTest.headers["Accept-Encoding"] == "gzip, deflate, br"
+        assert requestToTest.headers["Accept-Language"] == "en-GB,en;q=0.9"
+        assert requestToTest.headers["Cache-Control"] == "no-cache"
+        assert requestToTest.headers["Connection"] == "keep-alive"
+        assert requestToTest.headers["Host"] == "moodle.tau.ac.il"
+        assert requestToTest.headers["Pragma"] == "no-cache"
+        assert requestToTest.headers["Sec-Fetch-Dest"] == "document"
+        assert requestToTest.headers["Sec-Fetch-Mode"] == "navigate"
+        assert requestToTest.headers["Sec-Fetch-Site"] == "none"
+        assert requestToTest.headers["Sec-Fetch-User"] == "?1"
+        assert requestToTest.headers["Upgrade-Insecure-Requests"] == "1"
+        assert requestToTest.headers["User-Agent"] == "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36"
+        assert requestToTest.headers["Sec-Ch-Ua"] == '"Chromium";v="104", " Not A;Brand";v="99", "Google Chrome";v="104"'
+        assert requestToTest.headers["Sec-Ch-Ua-Mobile"] == "?0"
+        assert requestToTest.headers["Sec-Ch-Ua-Platform"] == '"Windows"'
+
+    with open(f"{testFilesLocation}test_request.txt", "r") as f:
+        requestStr = f.read()
+    request = httpUtils.parseRequest(requestStr)
+    assertions(request)
+    request = httpUtils.Request("GET", httpUtils.URL("https://moodle.tau.ac.il/"), True, "requestContentTest", acceptEnc="gzip, deflate, br", shouldOptionalHeaders=True)
+    request["Sec-Fetch-Mode"] = "navigate"
+    request["Sec-Fetch-Site"] = "none"
+    assertions(request)

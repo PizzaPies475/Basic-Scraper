@@ -20,7 +20,7 @@ class bColors:
 
 class HttpConversation:
 
-    def __init__(self, port: int = 443, packetRecvTimeOut: int = 2, log: bool = True, options: bool = False,
+    def __init__(self, port: int = 443, packetRecvTimeOut: int = 2, log: bool = True, sendOptionalHeaders: bool = False,
                  acceptEncoding: str = "utf-8", recvSize: int = 0, logLocation: str = "HTTP-Logs",
                  maxReferrals: int = 10, maxRetries: int = 5, isSecure: bool = True) -> None:
         self.__clientSocket: socket = None
@@ -29,7 +29,7 @@ class HttpConversation:
         self.connectionList: list[Connection] = []
         self.packetRecvTimeOut: int = packetRecvTimeOut
         self.keepAlive: bool = False
-        self.options: bool = options
+        self.sendOptionalHeaders: bool = sendOptionalHeaders
         self.cookieJar: CookieJar = CookieJar()
         self.acceptEnc: str = acceptEncoding
         self.log: bool = log
@@ -50,10 +50,9 @@ class HttpConversation:
         if isinstance(connection, URL):
             connection: Connection = Connection(connection, 'GET', getUrlName(connection))
         self.currConnection = connection
-        self.currConnection.request = Request(connection.requestType, connection.url, connection.content,
-                                              self.cookieJar.getCookiesStr(self.currConnection.url),
-                                              connection.headers, acceptEnc=self.acceptEnc,
-                                              options=self.options)
+        self.currConnection.request = Request(connection.requestType, connection.url, connection.isUserAction,
+                                              connection.content, self.cookieJar.getCookiesStr(self.currConnection.url),
+                                              connection.headers, acceptEnc=self.acceptEnc)
         if self.log:
             self.__logData(self.currConnection.request, f"{self.currIndex}{self.currConnection.name}_request.txt")
         self.connectionList.append(connection)
@@ -62,10 +61,12 @@ class HttpConversation:
         while retryCounter < self.maxRetries:
             try:
                 data = self.__sendRecv()
-                self.currConnection.response = parseResponse(data.decode("ISO-8859-1"), self.currConnection.url)
+                self.currConnection.response = parseResponse(data, self.currConnection.url)
                 break
-            except IndexError:
+            except ValueError:
                 retryCounter += 1
+                if retryCounter == self.maxRetries:
+                    raise ConnectionError(f"Could not connect to {connection.url}")
         if self.log:
             self.__logData(self.currConnection.response, f"{self.currIndex}{self.currConnection.name}_response.txt")
         self.__printStatusLine()
